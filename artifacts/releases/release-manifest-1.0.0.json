@@ -1,0 +1,129 @@
+{
+  "date_riyadh": "2026-09-30",
+  "app": "حصيلة",
+  "package": "com.riham.haseela",
+  "version": "1.0.0+1",
+  "flutter": "3.41.6",
+  "dart": "3.11.4",
+  "min_android_api": 24,
+  "target_android_api": 36,
+  "database_version": 2,
+  "backup_version": 1,
+  "tests_passed": 22,
+  "test_exit_code": 0,
+  "analyze_exit_code": 0,
+  "universal_build_exit_code": 0,
+  "split_build_exit_code": 0,
+  "test_environment": "Windows Flutter test engine + SQLite FFI; no connected Android device or AVD",
+  "benchmark_10000_orders_ms": 8,
+  "releases": [
+    {
+      "file": "haseela-1.0.0-arm64-v8a.apk",
+      "path": "C:\\Users\\ayami\\Desktop\\rihamACC\\artifacts\\releases\\haseela-1.0.0-arm64-v8a.apk",
+      "bytes": 17885159,
+      "size_mib": 17.06,
+      "sha256": "c371650abd2f631a4eab0f386aede4bddeb4259d562bf81f440c7b5756351f82",
+      "signature_exit_code": 0,
+      "native_code": [
+        "native-code: 'arm64-v8a'"
+      ],
+      "bundled_fonts": [
+        "assets/flutter_assets/assets/fonts/Tajawal-Bold.ttf",
+        "assets/flutter_assets/assets/fonts/Tajawal-Medium.ttf",
+        "assets/flutter_assets/assets/fonts/Tajawal-Regular.ttf"
+      ],
+      "compiled_libraries": [
+        "lib/arm64-v8a/libapp.so"
+      ]
+    },
+    {
+      "file": "haseela-1.0.0-armeabi-v7a.apk",
+      "path": "C:\\Users\\ayami\\Desktop\\rihamACC\\artifacts\\releases\\haseela-1.0.0-armeabi-v7a.apk",
+      "bytes": 15482751,
+      "size_mib": 14.77,
+      "sha256": "3e51d0c976b4aef6c0cb9fcb083186b225f16cfc80838cb128f2d1b2860f5af0",
+      "signature_exit_code": 0,
+      "native_code": [
+        "native-code: 'armeabi-v7a'"
+      ],
+      "bundled_fonts": [
+        "assets/flutter_assets/assets/fonts/Tajawal-Bold.ttf",
+        "assets/flutter_assets/assets/fonts/Tajawal-Medium.ttf",
+        "assets/flutter_assets/assets/fonts/Tajawal-Regular.ttf"
+      ],
+      "compiled_libraries": [
+        "lib/armeabi-v7a/libapp.so"
+      ]
+    },
+    {
+      "file": "haseela-1.0.0-universal.apk",
+      "path": "C:\\Users\\ayami\\Desktop\\rihamACC\\artifacts\\releases\\haseela-1.0.0-universal.apk",
+      "bytes": 50950269,
+      "size_mib": 48.59,
+      "sha256": "3d251c421a63b9e07ae2793f63465ede49c1af89fb2b2d6bbb0a14d4245f10f5",
+      "signature_exit_code": 0,
+      "native_code": [
+        "native-code: 'arm64-v8a' 'armeabi-v7a' 'x86_64'"
+      ],
+      "bundled_fonts": [
+        "assets/flutter_assets/assets/fonts/Tajawal-Bold.ttf",
+        "assets/flutter_assets/assets/fonts/Tajawal-Medium.ttf",
+        "assets/flutter_assets/assets/fonts/Tajawal-Regular.ttf"
+      ],
+      "compiled_libraries": [
+        "lib/arm64-v8a/libapp.so",
+        "lib/armeabi-v7a/libapp.so",
+        "lib/x86_64/libapp.so"
+      ]
+    },
+    {
+      "file": "haseela-1.0.0-x86_64.apk",
+      "path": "C:\\Users\\ayami\\Desktop\\rihamACC\\artifacts\\releases\\haseela-1.0.0-x86_64.apk",
+      "bytes": 19263329,
+      "size_mib": 18.37,
+      "sha256": "401fb0548328fbcb4241c126b9cdb40db5d1558a1abd7089eda56097af5ceb12",
+      "signature_exit_code": 0,
+      "native_code": [
+        "native-code: 'x86_64'"
+      ],
+      "bundled_fonts": [
+        "assets/flutter_assets/assets/fonts/Tajawal-Bold.ttf",
+        "assets/flutter_assets/assets/fonts/Tajawal-Medium.ttf",
+        "assets/flutter_assets/assets/fonts/Tajawal-Regular.ttf"
+      ],
+      "compiled_libraries": [
+        "lib/x86_64/libapp.so"
+      ]
+    }
+  ],
+  "dart_sources": [
+    {
+      "file": "database.dart",
+      "sha256": "939b759686d97254f9ded8e1dab1576a47e5796f70fba55d533a41fe4f4950d5"
+    },
+    {
+      "file": "design.dart",
+      "sha256": "8b1d9862ef7a4916683dca39c0c3b58d27efa3cb87172ca9311bac6cbc68f699"
+    },
+    {
+      "file": "domain.dart",
+      "sha256": "40d0a27c8db3a135233df36e3fdec05b62ced73348f41bd8c9409134e647f828"
+    },
+    {
+      "file": "forms.dart",
+      "sha256": "9396446459f6eb5a2fe671e6f0f4f2f75f8d4965097c5011856d29a9ff9966b1"
+    },
+    {
+      "file": "main.dart",
+      "sha256": "b80c18598326af9ce13bb3a2f2e55735dcfe61f805dcabfe9be081fb0674e23a"
+    },
+    {
+      "file": "screens.dart",
+      "sha256": "c863763e321a6f7e6e44490720df2cf2fcae98c832210cc9fa4a14ea526066b6"
+    },
+    {
+      "file": "store.dart",
+      "sha256": "698032b6c088307e9bc93d0c2d98cad35e41e6ebce48e38d1ab832cffa750b46"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+<resources>
+  <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+    <item name="android:windowSplashScreenBackground">#FAF7F5</item>
+    <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_flower</item>
+    <item name="android:windowSplashScreenIconBackgroundColor">#FAF3F4</item>
+    <item name="android:windowLightStatusBar">true</item>
+  </style>
+</resources>
