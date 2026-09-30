@@ -7,6 +7,8 @@ import 'package:flutter/services.dart';
 import 'design.dart';
 import 'domain.dart';
 import 'store.dart';
+import 'order_form.dart';
+export 'order_form.dart';
 
 final numberInputFormatter = TextInputFormatter.withFunction((
   oldValue,
@@ -48,6 +50,7 @@ Widget completeTextField({
   TextInputAction? textInputAction,
   ValueChanged<String>? onFieldSubmitted,
   required InputDecoration decoration,
+  bool compact = false,
 }) => LayoutBuilder(
   builder: (context, constraints) {
     final numeric =
@@ -61,18 +64,23 @@ Widget completeTextField({
             decoration.labelText!,
             style: Theme.of(context).textTheme.bodyMedium,
           ),
-          const SizedBox(height: 9),
+          SizedBox(height: compact ? 4 : 9),
         ],
         ValueListenableBuilder<TextEditingValue>(
           valueListenable: controller,
           builder: (context, value, _) {
             var style = Theme.of(context).textTheme.bodyLarge!;
+            if (compact) style = style.copyWith(fontSize: 14);
             if (numeric && value.text.isNotEmpty) {
               final available =
                   (constraints.maxWidth -
-                          36 -
-                          (decoration.prefixIcon == null ? 0 : 48) -
-                          (decoration.suffixIcon == null ? 0 : 48))
+                          (compact ? 24 : 36) -
+                          (decoration.prefixIcon == null
+                              ? 0
+                              : (compact ? 36 : 48)) -
+                          (decoration.suffixIcon == null
+                              ? 0
+                              : (compact ? 36 : 48)))
                       .clamp(1.0, double.infinity);
               final painter = TextPainter(
                 text: TextSpan(text: value.text, style: style),
@@ -93,7 +101,12 @@ Widget completeTextField({
               enabled: enabled,
               maxLength: maxLength,
               keyboardType: keyboardType,
-              textDirection: textDirection,
+              textDirection:
+                  textDirection ??
+                  (keyboardType == TextInputType.emailAddress &&
+                          value.text.contains('@')
+                      ? TextDirection.ltr
+                      : null),
               inputFormatters: inputFormatters,
               textInputAction: textInputAction,
               onFieldSubmitted: onFieldSubmitted,
@@ -101,6 +114,16 @@ Widget completeTextField({
               minLines: 1,
               maxLines: numeric ? 1 : null,
               decoration: InputDecoration(
+                isDense: compact,
+                contentPadding: compact
+                    ? const EdgeInsets.symmetric(horizontal: 12, vertical: 11)
+                    : null,
+                prefixIconConstraints: compact
+                    ? const BoxConstraints(minWidth: 36, minHeight: 40)
+                    : null,
+                suffixIconConstraints: compact
+                    ? const BoxConstraints(minWidth: 36, minHeight: 40)
+                    : null,
                 hintText: decoration.hintText,
                 hintMaxLines: 3,
                 counterText: decoration.counterText,
@@ -259,20 +282,27 @@ String? priceValidator(String? text) => parseMoney(text ?? '') == null
     ? 'أدخلي سعرًا صحيحًا، حتى منزلتين عشريتين'
     : null;
 
-Future<void> accountSheet(
+Future<Account?> accountSheet(
   BuildContext context,
   AppStore store, {
   Account? account,
 }) async {
-  final saved = await openSheet<bool>(
+  final saved = await openSheet<int>(
     context,
     AccountForm(store: store, account: account),
   );
-  if (saved == true && context.mounted) {
+  if (saved != null && context.mounted) {
     notice(
       context,
       account == null ? 'أُضيف الحساب، بداية جميلة ✨' : 'تم حفظ الحساب',
     );
+  }
+  if (saved == null) return null;
+  try {
+    return await store.database.account(saved);
+  } catch (e) {
+    if (context.mounted) notice(context, friendlyError(e));
+    return null;
   }
 }
 
@@ -287,6 +317,7 @@ class AccountForm extends StatefulWidget {
 class _AccountFormState extends State<AccountForm> {
   final key = GlobalKey<FormState>();
   late final name = TextEditingController(text: widget.account?.name ?? '');
+  late bool isClosed = widget.account?.isClosed ?? false;
   bool saving = false;
   String? error;
   @override
@@ -302,10 +333,14 @@ class _AccountFormState extends State<AccountForm> {
       error = null;
     });
     try {
-      await widget.store.mutate(
-        () => widget.store.database.saveAccount(name.text, old: widget.account),
+      final id = await widget.store.mutate(
+        () => widget.store.database.saveAccount(
+          name.text,
+          old: widget.account,
+          isClosed: isClosed,
+        ),
       );
-      if (mounted) Navigator.pop(context, true);
+      if (mounted) Navigator.pop(context, id);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -319,7 +354,7 @@ class _AccountFormState extends State<AccountForm> {
   @override
   Widget build(BuildContext context) => SheetFrame(
     title: widget.account == null ? 'حساب جديد' : 'تعديل الحساب',
-    subtitle: 'مساحة صغيرة تجمع طلباتك.',
+    subtitle: 'بريدك الإلكتروني، أو أي اسم يجمع طلباتك.',
     saving: saving,
     save: save,
     child: Form(
@@ -330,16 +365,75 @@ class _AccountFormState extends State<AccountForm> {
           completeTextField(
             key: const ValueKey('account_name'),
             controller: name,
-            validator: nameValidator,
+            validator: (v) => v == null || v.trim().isEmpty
+                ? 'أدخلي البريد أو اسم الحساب'
+                : v.length > 254
+                ? 'الحد 254 حرفًا'
+                : null,
             enabled: !saving,
-            maxLength: 120,
+            maxLength: 254,
+            keyboardType: TextInputType.emailAddress,
             textInputAction: TextInputAction.done,
             onFieldSubmitted: (_) => save(),
             decoration: const InputDecoration(
-              labelText: 'اسم الحساب',
-              hintText: 'مثلًا: طلبات سبتمبر',
+              labelText: 'البريد الإلكتروني أو اسم الحساب',
+              hintText: 'example@email.com',
               counterText: '',
-              prefixIcon: Icon(Icons.folder_open_rounded),
+              prefixIcon: Icon(Icons.alternate_email_rounded),
+            ),
+          ),
+          const SizedBox(height: 12),
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: saving ? null : () => setState(() => isClosed = !isClosed),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+              child: Row(
+                children: [
+                  Icon(
+                    isClosed ? Icons.lock_rounded : Icons.lock_open_rounded,
+                    size: 17,
+                    color: isClosed
+                        ? Theme.of(context).colorScheme.primary
+                        : Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'حساب مغلق',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                        ),
+                        Text(
+                          'إيقاف إضافة طلبات جديدة لهذا الحساب',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                fontSize: 11,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Transform.scale(
+                    scale: 0.8,
+                    child: Switch(
+                      value: isClosed,
+                      onChanged: saving
+                          ? null
+                          : (v) => setState(() => isClosed = v),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
           if (error != null) FormErrorText(error!),
@@ -481,17 +575,14 @@ Future<void> orderSheet(
   int accountId, {
   PurchaseOrder? order,
 }) async {
-  if (order == null && store.report.products == 0) {
-    final add = await confirm(
-      context,
-      'نبدأ بمنتج؟',
-      'أضيفي أول منتج، ثم نكمل تسجيل الطلب.',
-      button: 'إضافة منتج',
-      destructive: false,
-    );
-    if (!add || !context.mounted) return;
-    await productSheet(context, store);
-    if (store.report.products == 0 || !context.mounted) return;
+  if (order == null) {
+    final acc = await store.database.account(accountId);
+    if (acc != null && acc.isClosed) {
+      if (context.mounted) {
+        notice(context, 'الحساب مغلق؛ لا يمكن إضافة طلبات جديدة إليه');
+      }
+      return;
+    }
   }
   if (!context.mounted) return;
   final saved = await openSheet<bool>(
@@ -501,308 +592,6 @@ Future<void> orderSheet(
   if (saved == true && context.mounted) {
     notice(context, order == null ? 'تمت إضافة الطلب ✨' : 'تم حفظ الطلب');
   }
-}
-
-class OrderForm extends StatefulWidget {
-  const OrderForm({
-    super.key,
-    required this.store,
-    required this.accountId,
-    this.order,
-  });
-  final AppStore store;
-  final int accountId;
-  final PurchaseOrder? order;
-  @override
-  State<OrderForm> createState() => _OrderFormState();
-}
-
-class _OrderFormState extends State<OrderForm> {
-  final key = GlobalKey<FormState>();
-  late final quantity = TextEditingController(
-    text: widget.order?.quantity.toString() ?? '1',
-  );
-  late final purchase = TextEditingController(
-    text: widget.order == null ? '' : moneyInput(widget.order!.purchase),
-  );
-  late final sale = TextEditingController(
-    text: widget.order == null ? '' : moneyInput(widget.order!.sale),
-  );
-  late final snapshotName = TextEditingController(
-    text: widget.order?.productName ?? '',
-  );
-  late int? productId = widget.order?.productId;
-  late OrderStatus status = widget.order?.status ?? OrderStatus.pending;
-  bool saving = false;
-  String? error;
-  @override
-  void initState() {
-    super.initState();
-    for (final c in [quantity, purchase, sale]) {
-      c.addListener(recalculate);
-    }
-  }
-
-  void recalculate() {
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void dispose() {
-    for (final c in [quantity, purchase, sale, snapshotName]) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  Future<void> selectProduct() async {
-    final product = await openSheet<Product>(
-      context,
-      ProductPicker(store: widget.store),
-    );
-    if (product != null && mounted) {
-      setState(() {
-        productId = product.id;
-        snapshotName.text = product.name;
-        sale.text = moneyInput(product.sale);
-      });
-    }
-  }
-
-  Future<void> save() async {
-    if (saving || !key.currentState!.validate()) return;
-    if (snapshotName.text.trim().isEmpty) {
-      setState(() => error = 'اختاري المنتج أولًا');
-      return;
-    }
-    setState(() {
-      saving = true;
-      error = null;
-    });
-    try {
-      await widget.store.mutate(
-        () => widget.store.database.saveOrder(
-          accountId: widget.accountId,
-          productId: productId,
-          productName: snapshotName.text,
-          quantity: parseQuantity(quantity.text)!,
-          purchase: parseMoney(purchase.text)!,
-          sale: parseMoney(sale.text)!,
-          status: status,
-          old: widget.order,
-        ),
-      );
-      if (mounted) Navigator.pop(context, true);
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          saving = false;
-          error = friendlyError(e);
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final q = parseQuantity(quantity.text) ?? 0,
-        buy = parseMoney(purchase.text) ?? 0,
-        sell = parseMoney(sale.text) ?? 0;
-    return SheetFrame(
-      title: widget.order == null ? 'طلب جديد' : 'تعديل الطلب',
-      subtitle: 'التفاصيل هنا، والحساب علينا.',
-      saving: saving,
-      save: save,
-      child: Form(
-        key: key,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Pressable(
-              key: const ValueKey('order_product_picker'),
-              onTap: saving ? null : selectProduct,
-              child: SurfaceCard(
-                color: softTint(context, lilac, .07),
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    const Icon(Icons.shopping_bag_outlined, color: lilac),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'المنتج',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                          Text(
-                            snapshotName.text.isEmpty
-                                ? 'اختاري من قائمة المنتجات'
-                                : snapshotName.text,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Icon(Icons.keyboard_arrow_down_rounded, color: lilac),
-                  ],
-                ),
-              ),
-            ),
-            if (widget.order != null) ...[
-              const SizedBox(height: 12),
-              completeTextField(
-                controller: snapshotName,
-                validator: nameValidator,
-                enabled: !saving,
-                maxLength: 120,
-                decoration: const InputDecoration(
-                  labelText: 'اسم المنتج في هذا الطلب',
-                  counterText: '',
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            completeTextField(
-              key: const ValueKey('order_quantity'),
-              controller: quantity,
-              enabled: !saving,
-              validator: (v) => parseQuantity(v ?? '') == null
-                  ? 'أدخلي كمية صحيحة أكبر من صفر'
-                  : null,
-              keyboardType: TextInputType.number,
-              textDirection: TextDirection.ltr,
-              inputFormatters: [numberInputFormatter],
-              decoration: const InputDecoration(
-                labelText: 'الكمية',
-                prefixIcon: Icon(Icons.layers_outlined),
-              ),
-            ),
-            const SizedBox(height: 16),
-            completeTextField(
-              key: const ValueKey('order_purchase'),
-              controller: purchase,
-              enabled: !saving,
-              validator: priceValidator,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              textDirection: TextDirection.ltr,
-              inputFormatters: [numberInputFormatter],
-              decoration: const InputDecoration(
-                labelText: 'سعر شراء الوحدة',
-                suffixIcon: currencySuffix,
-              ),
-            ),
-            const SizedBox(height: 16),
-            completeTextField(
-              key: const ValueKey('order_sale'),
-              controller: sale,
-              enabled: !saving,
-              validator: priceValidator,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              textDirection: TextDirection.ltr,
-              inputFormatters: [numberInputFormatter],
-              decoration: const InputDecoration(
-                labelText: 'سعر بيع الوحدة',
-                suffixIcon: currencySuffix,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'سعر البيع خاص بهذا الطلب؛ لا يغيّر سعر المنتج.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 18),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: OrderStatus.values
-                  .map(
-                    (s) => ChoiceChip(
-                      label: Text(s.label),
-                      selected: status == s,
-                      onSelected: saving
-                          ? null
-                          : (_) => setState(() => status = s),
-                      selectedColor: softTint(context, statusColor(s), .18),
-                      showCheckmark: false,
-                      avatar: Icon(
-                        statusIcon(s),
-                        size: 16,
-                        color: statusColor(s),
-                      ),
-                      side: BorderSide(
-                        color: status == s
-                            ? statusColor(s).withValues(alpha: .25)
-                            : Theme.of(context).colorScheme.outlineVariant,
-                      ),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(13),
-                      ),
-                    ),
-                  )
-                  .toList(),
-            ),
-            const SizedBox(height: 20),
-            SurfaceCard(
-              color: softTint(context, lilac, .06),
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  _previewRow('إجمالي الشراء', buy * q),
-                  const SizedBox(height: 10),
-                  _previewRow(
-                    status == OrderStatus.cancelled
-                        ? 'الاسترداد المتوقع'
-                        : 'إجمالي البيع المتوقع',
-                    status == OrderStatus.cancelled ? buy * q : sell * q,
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 8),
-                    child: Divider(),
-                  ),
-                  _previewRow(
-                    status == OrderStatus.cancelled ? 'ربح نشط' : 'ربح الطلب',
-                    status == OrderStatus.cancelled ? 0 : (sell - buy) * q,
-                    bold: true,
-                  ),
-                ],
-              ),
-            ),
-            if (error != null) FormErrorText(error!),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _previewRow(String title, int value, {bool bold = false}) => Row(
-    children: [
-      Expanded(
-        child: Text(
-          title,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
-          ),
-        ),
-      ),
-      Flexible(
-        child: MoneyLine(
-          value,
-          size: bold ? 21 : 17,
-          animated: false,
-          color: bold
-              ? (value < 0 ? rose : Theme.of(context).colorScheme.primary)
-              : null,
-        ),
-      ),
-    ],
-  );
 }
 
 class ProductPicker extends StatefulWidget {
@@ -1085,7 +874,7 @@ Future<void> restoreBackup(
     final ok = await confirm(
       context,
       'استعادة النسخة؟',
-      'تحتوي على ${backup.accounts.length} حساب و${backup.products.length} منتج و${backup.orders.length} طلب.\n\nستستبدل بياناتك الحالية. سنحفظ نسخة أمان قبل الاستبدال، ويمكنك استعادتها من القائمة.',
+      'تحتوي على ${backup.accounts.length} حساب و${backup.products.length} منتج و${backup.orders.length} طلب و${backup.receipts.length} سجل أرباح مستلمة.\n\nستستبدل بياناتك الحالية. سنحفظ نسخة أمان قبل الاستبدال، ويمكنك استعادتها من القائمة.',
       button: 'استعادة',
       destructive: false,
     );

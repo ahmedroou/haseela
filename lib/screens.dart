@@ -5,6 +5,9 @@ import 'design.dart';
 import 'domain.dart';
 import 'forms.dart';
 import 'store.dart';
+import 'account_card.dart';
+import 'finance.dart';
+export 'account_card.dart';
 
 String shortDate(int ms) => DateFormat(
   'd MMMM yyyy',
@@ -17,9 +20,11 @@ class PageHeading extends StatelessWidget {
     required this.title,
     required this.subtitle,
     this.action,
+    this.badge,
   });
   final String title, subtitle;
   final Widget? action;
+  final Widget? badge;
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(24, 22, 24, 24),
@@ -30,7 +35,18 @@ class PageHeading extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: Theme.of(context).textTheme.headlineLarge),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Flexible(
+                    child: Text(
+                      title,
+                      style: Theme.of(context).textTheme.headlineLarge,
+                    ),
+                  ),
+                  if (badge != null) ...[const SizedBox(width: 8), badge!],
+                ],
+              ),
               const SizedBox(height: 6),
               Text(
                 subtitle,
@@ -65,16 +81,11 @@ class SectionLabel extends StatelessWidget {
   );
 }
 
-class Dashboard extends StatelessWidget {
-  const Dashboard({
-    super.key,
-    required this.store,
-    required this.openAccount,
-    required this.showAccounts,
-  });
+typedef Dashboard = ReportsPage;
+
+class ReportsPage extends StatelessWidget {
+  const ReportsPage({super.key, required this.store});
   final AppStore store;
-  final ValueChanged<Account> openAccount;
-  final VoidCallback showAccounts;
   @override
   Widget build(BuildContext context) {
     final r = store.report;
@@ -93,14 +104,14 @@ class Dashboard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'أهلًا بكِ في حصيلة',
+                      'التقرير العام',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'كل شيء، في مكانه.',
+                      'حصيلتك، بكل وضوح.',
                       style: Theme.of(context).textTheme.headlineMedium,
                     ),
                   ],
@@ -117,6 +128,13 @@ class Dashboard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 24),
+          FilledButton.icon(
+            key: const ValueKey('record_received_profit'),
+            onPressed: store.busy ? null : () => receiptSheet(context, store),
+            icon: const Icon(Icons.savings_outlined, size: 19),
+            label: const Text('تسجيل أرباح مستلمة'),
+          ),
+          const SizedBox(height: 14),
           Entrance(
             child: Container(
               decoration: BoxDecoration(
@@ -205,25 +223,34 @@ class Dashboard extends StatelessWidget {
                   (constraints.maxWidth - (columns - 1) * 12) / columns;
               final cards = [
                 FinanceCard(
-                  title: 'الأرباح المتوقعة',
+                  title: 'الربح المتوقع المتبقي',
                   value: r.expectedProfit,
                   icon: Icons.trending_up_rounded,
                   color: lilac,
-                  detail: 'أرباح الطلبات قيد الانتظار والتي وصلت',
+                  detail:
+                      'ربح الطلبات غير الملغية ناقص الأرباح المستلمة المسجّلة',
                 ),
                 FinanceCard(
+                  key: const ValueKey('received_profit_report_card'),
                   title: 'الأرباح المحققة',
                   value: r.realizedProfit,
                   icon: Icons.verified_outlined,
                   color: sage,
-                  detail: 'أرباح الطلبات التي وصلت',
+                  detail: 'الأرباح المستلمة المسجّلة فعلًا؛ اضغطي لفتح سجلها',
+                  onTap: () => openFinancePage(
+                    context,
+                    ReceiptHistoryPage(store: store),
+                  ),
                 ),
                 FinanceCard(
+                  key: const ValueKey('refund_report_card'),
                   title: 'المفترض استرداده',
                   value: r.refund,
                   icon: Icons.undo_rounded,
                   color: rose,
-                  detail: 'تكلفة شراء جميع الطلبات الملغية',
+                  detail: 'اضغطي لعرض سجل مبالغ جميع الطلبات الملغية',
+                  onTap: () =>
+                      openFinancePage(context, RefundHistoryPage(store: store)),
                 ),
                 FinanceCard(
                   title: 'الصافي بعد الاسترداد',
@@ -329,52 +356,6 @@ class Dashboard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 25),
-          SectionLabel(
-            'الحسابات الأخيرة',
-            trailing: TextButton(
-              onPressed: showAccounts,
-              child: const Text('عرض الكل'),
-            ),
-          ),
-          if (store.recent.isEmpty)
-            SurfaceCard(
-              padding: EdgeInsets.zero,
-              child: EmptyState(
-                title: 'ابدئي بإضافة أول حساب ✨',
-                subtitle: 'اجمعي طلباتك بالطريقة التي تناسبك.',
-                icon: Icons.folder_open_rounded,
-                button: 'إضافة حساب',
-                action: () => accountSheet(context, store),
-              ),
-            )
-          else ...[
-            ...store.recent.map(
-              (a) => Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: AccountTile(
-                  account: a,
-                  store: store,
-                  onOpen: () => openAccount(a),
-                ),
-              ),
-            ),
-            const SizedBox(height: 4),
-            OutlinedButton.icon(
-              onPressed: store.busy ? null : () => accountSheet(context, store),
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('إضافة حساب'),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                side: BorderSide(
-                  color: Theme.of(context).colorScheme.outlineVariant,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
-                ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 25),
           const SectionLabel('تفاصيل حصيلتك'),
           SurfaceCard(
             child: Column(
@@ -443,22 +424,6 @@ class Dashboard extends StatelessWidget {
               );
             },
           ),
-          const SizedBox(height: 18),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.lock_outline_rounded,
-                size: 13,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                'بياناتك محفوظة على جهازك',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-          ),
         ],
       ),
     );
@@ -490,16 +455,18 @@ class FinanceCard extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.detail,
+    this.onTap,
   });
   final String title, detail;
   final int value;
   final IconData icon;
   final Color color;
+  final VoidCallback? onTap;
   @override
   Widget build(BuildContext context) => Tooltip(
     message: detail,
     child: Pressable(
-      onTap: () => notice(context, detail),
+      onTap: onTap ?? () => notice(context, detail),
       child: SurfaceCard(
         padding: const EdgeInsets.all(18),
         child: Column(
@@ -590,94 +557,6 @@ class _DeletableState extends State<Deletable> {
       opacity: removing ? 0 : 1,
       duration: motion(context, 180),
       child: widget.child(remove),
-    ),
-  );
-}
-
-class AccountTile extends StatelessWidget {
-  const AccountTile({
-    super.key,
-    required this.account,
-    required this.store,
-    required this.onOpen,
-  });
-  final Account account;
-  final AppStore store;
-  final VoidCallback onOpen;
-  @override
-  Widget build(BuildContext context) => Deletable(
-    child: (remove) => Pressable(
-      onTap: onOpen,
-      child: SurfaceCard(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
-        child: Row(
-          children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                color: softTint(context, lilac, .1),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: const Icon(
-                Icons.folder_open_rounded,
-                color: lilac,
-                size: 23,
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    account.name,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${account.orderCount} طلب · ${shortDate(account.createdAt)}',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-            PopupMenuButton<String>(
-              tooltip: 'خيارات الحساب',
-              enabled: !store.busy,
-              icon: const Icon(Icons.more_horiz_rounded, size: 21),
-              onSelected: (action) async {
-                if (action == 'edit') {
-                  await accountSheet(context, store, account: account);
-                } else {
-                  final ok = await confirm(
-                    context,
-                    'حذف «${account.name}»؟',
-                    'سيُحذف الحساب و${account.orderCount} طلب داخله نهائيًا، وتُزال مبالغها من التقرير العام.',
-                  );
-                  if (ok && context.mounted) {
-                    await remove(() async {
-                      await store.mutate(
-                        () => store.database.deleteAccount(account.id),
-                      );
-                      if (context.mounted) notice(context, 'تم حذف الحساب');
-                    });
-                  }
-                }
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(value: 'edit', child: Text('تعديل الاسم')),
-                const PopupMenuItem(value: 'delete', child: Text('حذف الحساب')),
-              ],
-            ),
-            Icon(
-              Icons.chevron_left_rounded,
-              size: 18,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ],
-        ),
-      ),
     ),
   );
 }
@@ -1070,16 +949,51 @@ class _AccountPageState extends State<AccountPage> {
         actions: [
           if (!missing)
             IconButton(
-              tooltip: 'تعديل اسم الحساب',
+              tooltip: account.isEmail
+                  ? 'نسخ البريد الإلكتروني'
+                  : 'نسخ اسم الحساب',
+              onPressed: () => copyAccount(context, account),
+              icon: const Icon(Icons.content_copy_rounded, size: 19),
+            ),
+          if (!missing) ...[
+            IconButton(
+              tooltip: account.isClosed ? 'إعادة فتح الحساب' : 'إغلاق الحساب',
+              onPressed: widget.store.busy
+                  ? null
+                  : () async {
+                      final newStatus = !account.isClosed;
+                      await widget.store.mutate(
+                        () => widget.store.database.toggleAccountClosed(
+                          account.id,
+                          newStatus,
+                        ),
+                      );
+                      if (context.mounted) {
+                        notice(
+                          context,
+                          newStatus ? 'تم إغلاق الحساب' : 'تم إعادة فتح الحساب',
+                        );
+                      }
+                    },
+              icon: Icon(
+                account.isClosed
+                    ? Icons.lock_open_rounded
+                    : Icons.lock_outline_rounded,
+                size: 20,
+              ),
+            ),
+            IconButton(
+              tooltip: 'تعديل الحساب',
               onPressed: widget.store.busy
                   ? null
                   : () => accountSheet(context, widget.store, account: account),
-              icon: const Icon(Icons.edit_outlined, size: 21),
+              icon: const Icon(Icons.edit_outlined, size: 20),
             ),
-          const SizedBox(width: 10),
+          ],
+          const SizedBox(width: 8),
         ],
       ),
-      floatingActionButton: missing
+      floatingActionButton: missing || account.isClosed
           ? null
           : Pressable(
               onTap: widget.store.busy
@@ -1111,13 +1025,69 @@ class _AccountPageState extends State<AccountPage> {
                 title: account.name,
                 subtitle:
                     '${account.orderCount} طلب · أُنشئ ${shortDate(account.createdAt)}',
+                badge: account.isClosed
+                    ? Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.outlineVariant.withValues(alpha: .5),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.lock_rounded,
+                              size: 11,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'مغلق',
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : null,
               ),
               empty: EmptyState(
-                title: 'لا توجد طلبات هنا بعد',
-                subtitle: 'أضيفي أول طلب، وستظهر أرقامه فورًا في حصيلتك.',
-                icon: Icons.receipt_long_outlined,
-                button: 'إضافة طلب',
-                action: () => orderSheet(context, widget.store, account.id),
+                title: account.isClosed
+                    ? 'الحساب مغلق'
+                    : 'لا توجد طلبات هنا بعد',
+                subtitle: account.isClosed
+                    ? 'هذا الحساب مغلق حاليًا. يمكنك إعادة فتحه في أي وقت لإضافة طلبات.'
+                    : 'أضيفي أول طلب، وستظهر أرقامه فورًا في حصيلتك.',
+                icon: account.isClosed
+                    ? Icons.lock_outline_rounded
+                    : Icons.receipt_long_outlined,
+                button: account.isClosed ? 'إعادة فتح الحساب' : 'إضافة طلب',
+                action: account.isClosed
+                    ? () async {
+                        await widget.store.mutate(
+                          () => widget.store.database.toggleAccountClosed(
+                            account.id,
+                            false,
+                          ),
+                        );
+                        if (context.mounted) {
+                          notice(context, 'تم إعادة فتح الحساب');
+                        }
+                      }
+                    : () => orderSheet(context, widget.store, account.id),
               ),
               item: (o) => Padding(
                 key: ValueKey(o.id),
@@ -1250,7 +1220,11 @@ class OrderTile extends StatelessWidget {
               spacing: 22,
               runSpacing: 12,
               children: [
-                _price(context, 'شراء الوحدة', order.purchase),
+                _price(
+                  context,
+                  order.approximateUnit ? 'شراء الوحدة ≈' : 'شراء الوحدة',
+                  order.purchase,
+                ),
                 _price(context, 'بيع الوحدة', order.sale),
               ],
             ),

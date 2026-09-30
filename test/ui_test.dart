@@ -11,6 +11,8 @@ import 'package:haseela/forms.dart';
 import 'package:haseela/main.dart';
 import 'package:haseela/screens.dart';
 import 'package:haseela/store.dart';
+import 'package:haseela/finance.dart';
+import 'package:haseela/home.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -146,12 +148,16 @@ void main() {
     (tester) async {
       await tester.runAsync(seed);
       await launch(tester);
+      expect(find.text('إجمالي المبلغ المنفق'), findsNothing);
+      await screenshot(tester, 'home-light');
+      await tester.tap(find.text('التقارير').hitTestable());
+      await flush(tester);
       expect(find.text('2,750'), findsOneWidget);
       expect(find.text('750'), findsOneWidget);
-      await screenshot(tester, 'home-light');
+      await screenshot(tester, 'reports-light');
       await tester.runAsync(() => store.setTheme('dark'));
       await flush(tester);
-      await screenshot(tester, 'home-dark');
+      await screenshot(tester, 'reports-dark');
       await tester.runAsync(() => store.setTheme('light'));
       await flush(tester);
       await tester.tap(find.text('المنتجات').hitTestable());
@@ -167,7 +173,7 @@ void main() {
       await flush(tester);
       await tester.tap(find.widgetWithText(PopupMenuItem<OrderStatus>, 'وصل'));
       await flush(tester);
-      expect(store.report.realizedProfit, 75000);
+      expect(store.report.realizedProfit, 0);
       expect(store.report.pending, 0);
       await tester.pumpWidget(const SizedBox());
       await flush(tester);
@@ -260,6 +266,8 @@ void main() {
       );
       await launch(tester, size: const Size(320, 640), scale: 1.6);
       await screenshot(tester, 'small-large-text');
+      await tester.tap(find.text('التقارير').hitTestable());
+      await flush(tester);
       expect(find.byType(MoneyCounter).evaluate().isNotEmpty, true);
       await tester.tap(find.text('المنتجات').hitTestable());
       await flush(tester);
@@ -433,6 +441,179 @@ void main() {
       final editable = tester.state<EditableTextState>(edit).renderEditable;
       expect(editable.maxScrollExtent, lessThanOrEqualTo(1));
       await screenshot(tester, 'full-field-labels');
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    },
+  );
+
+  testWidgets(
+    'email copy, quick recording, total pricing and remembered purchase fit without scrolling',
+    (tester) async {
+      late int accountId;
+      await tester.runAsync(() async {
+        accountId = await db.saveAccount('riham@example.com');
+        final product = await db.saveProduct(starterProductNames.first, 18500);
+        await db.saveOrder(
+          accountId: accountId,
+          productId: product,
+          productName: starterProductNames.first,
+          quantity: 1,
+          purchase: 12500,
+          sale: 18500,
+          status: OrderStatus.pending,
+        );
+        await store.load();
+      });
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = call.arguments['text'] as String;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await launch(tester);
+      await tester.tap(find.byKey(ValueKey('copy_account_$accountId')));
+      await flush(tester);
+      expect(copied, 'riham@example.com');
+      expect(find.byType(AccountPage), findsNothing);
+      await screenshot(tester, 'home-recording');
+      await tester.tap(find.byKey(const ValueKey('home_new_order')));
+      await flush(tester);
+      expect(find.byType(AccountPicker), findsOneWidget);
+      await tester.tap(find.text('riham@example.com').hitTestable());
+      await flush(tester);
+      await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
+      await flush(tester);
+      await tester.tap(find.text(starterProductNames.first).hitTestable());
+      await flush(tester);
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const ValueKey('order_purchase')))
+            .controller!
+            .text,
+        '125.00',
+      );
+      final scroll = find.descendant(
+        of: find.byKey(const ValueKey('order_fields_scroll')),
+        matching: find.byType(Scrollable),
+      );
+      expect(
+        tester.state<ScrollableState>(scroll.first).position.maxScrollExtent,
+        lessThanOrEqualTo(1),
+      );
+      expect(
+        tester.getRect(find.byKey(const ValueKey('save_form'))).bottom,
+        lessThanOrEqualTo(844),
+      );
+      await tester.enterText(find.byKey(const ValueKey('order_quantity')), '٢');
+      await tester.tap(find.byKey(const ValueKey('purchase_total_mode')));
+      await tester.enterText(
+        find.byKey(const ValueKey('order_purchase')),
+        '٣٠٠',
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('سعر الوحدة 150 ريال'), findsOneWidget);
+      await screenshot(tester, 'order-compact-total');
+      await tester.tap(find.byKey(const ValueKey('save_form')));
+      await flush(tester);
+      final orders = (await tester.runAsync(() => db.orders(accountId)))!;
+      expect(orders.first.quantity, 2);
+      expect(orders.first.purchase, 15000);
+      expect(orders.first.cost, 30000);
+      await tester.tap(find.byKey(ValueKey('account_add_order_$accountId')));
+      await flush(tester);
+      await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
+      await flush(tester);
+      await tester.tap(find.text(starterProductNames.first).hitTestable());
+      await flush(tester);
+      expect(
+        tester
+            .widget<TextFormField>(find.byKey(const ValueKey('order_purchase')))
+            .controller!
+            .text,
+        '150.00',
+      );
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    },
+  );
+
+  testWidgets(
+    'record received profit and open compact refund and receipt journals from report',
+    (tester) async {
+      await tester.runAsync(() async {
+        await seed();
+        final account = (await db.accounts()).first;
+        for (var i = 0; i < 8; i++) {
+          await db.saveOrder(
+            accountId: account.id,
+            productId: null,
+            productName: 'طلب ملغي رقم $i',
+            quantity: 2,
+            purchase: 17500,
+            sale: 20000,
+            status: OrderStatus.cancelled,
+          );
+        }
+        await store.load();
+      });
+      await launch(tester);
+      await tester.tap(find.text('التقارير').hitTestable());
+      await flush(tester);
+      await tester.tap(find.byKey(const ValueKey('record_received_profit')));
+      await flush(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('received_profit_amount')),
+        '١٠٠٫٢٥',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('received_profit_note')),
+        'دفعة من المبيعات',
+      );
+      await tester.ensureVisible(find.byKey(const ValueKey('save_form')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save_form')));
+      await flush(tester);
+      expect(store.report.realizedProfit, 10025);
+      expect(store.report.expectedProfit, 64975);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('received_profit_report_card')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('received_profit_report_card')),
+      );
+      await flush(tester);
+      expect(find.byType(ReceiptHistoryPage), findsOneWidget);
+      expect(find.text('دفعة من المبيعات'), findsOneWidget);
+      await screenshot(tester, 'received-profit-journal');
+      await tester.tap(find.byTooltip('رجوع'));
+      await flush(tester);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('refund_report_card')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('refund_report_card')));
+      await flush(tester);
+      expect(find.byType(RefundHistoryPage), findsOneWidget);
+      expect(find.text('طلب ملغي رقم 7'), findsOneWidget);
+      final cards = find.descendant(
+        of: find.byType(RefundHistoryPage),
+        matching: find.byType(SurfaceCard),
+      );
+      expect(cards.evaluate().length, greaterThanOrEqualTo(6));
+      expect(tester.getSize(cards.first).height, lessThanOrEqualTo(85));
+      await screenshot(tester, 'refund-journal');
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       await flush(tester);

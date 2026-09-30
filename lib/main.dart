@@ -9,6 +9,7 @@ import 'forms.dart';
 import 'screens.dart';
 import 'store.dart';
 import 'updates.dart';
+import 'home.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -211,13 +212,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     final scheme = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
     final pages = [
-      Dashboard(
-        store: widget.store,
-        openAccount: accountRoute,
-        showAccounts: () => setState(() => selected = 1),
-      ),
+      HomePage(store: widget.store, openAccount: accountRoute),
       AccountsPage(store: widget.store, openAccount: accountRoute),
       ProductsPage(store: widget.store),
+      ReportsPage(store: widget.store),
     ];
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: (dark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
@@ -410,7 +408,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             ),
           ),
         ),
-        floatingActionButton: selected == 0
+        floatingActionButton: selected == 0 || selected == 3
             ? null
             : Pressable(
                 onTap: widget.store.busy
@@ -443,13 +441,19 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
               child: Row(
-                children: List.generate(3, (i) {
+                children: List.generate(4, (i) {
                   final active = selected == i;
-                  final label = ['الرئيسية', 'الحسابات', 'المنتجات'][i];
+                  final label = [
+                    'الرئيسية',
+                    'الحسابات',
+                    'المنتجات',
+                    'التقارير',
+                  ][i];
                   final icon = [
                     Icons.space_dashboard_outlined,
                     Icons.folder_open_rounded,
                     Icons.shopping_bag_outlined,
+                    Icons.insights_rounded,
                   ][i];
                   return Expanded(
                     child: Semantics(

@@ -40,6 +40,8 @@ int? parseQuantity(String text) {
 
 String moneyInput(int cents) =>
     '${cents ~/ 100}.${(cents % 100).toString().padLeft(2, '0')}';
+int unitFromTotal(int total, int quantity) =>
+    (total + quantity ~/ 2) ~/ quantity;
 String moneyText(int cents) {
   final absolute = cents.abs();
   final whole = (absolute ~/ 100).toString().replaceAllMapped(
@@ -59,16 +61,19 @@ class Product {
     required this.sale,
     required this.createdAt,
     required this.updatedAt,
+    this.lastPurchase,
   });
   final int id;
   final String name;
   final int sale, createdAt, updatedAt;
+  final int? lastPurchase;
   factory Product.fromMap(Map<String, Object?> m) => Product(
     id: m['id'] as int,
     name: m['name'] as String,
     sale: m['sale'] as int,
     createdAt: m['created_at'] as int,
     updatedAt: m['updated_at'] as int,
+    lastPurchase: m['last_purchase'] as int?,
   );
   Map<String, Object?> toMap() => {
     'id': id,
@@ -76,6 +81,7 @@ class Product {
     'sale': sale,
     'created_at': createdAt,
     'updated_at': updatedAt,
+    'last_purchase': lastPurchase,
   };
 }
 
@@ -85,23 +91,37 @@ class Account {
     required this.name,
     required this.createdAt,
     required this.updatedAt,
+    this.isClosed = false,
     this.orderCount = 0,
+    this.pieces = 0,
+    this.pending = 0,
+    this.arrived = 0,
+    this.cancelled = 0,
   });
   final int id;
   final String name;
   final int createdAt, updatedAt, orderCount;
+  final bool isClosed;
+  final int pieces, pending, arrived, cancelled;
+  bool get isEmail => RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(name);
   factory Account.fromMap(Map<String, Object?> m) => Account(
     id: m['id'] as int,
     name: m['name'] as String,
     createdAt: m['created_at'] as int,
     updatedAt: m['updated_at'] as int,
+    isClosed: m['is_closed'] == 1 || m['is_closed'] == true,
     orderCount: m['order_count'] as int? ?? 0,
+    pieces: (m['pieces'] as num?)?.toInt() ?? 0,
+    pending: (m['pending'] as num?)?.toInt() ?? 0,
+    arrived: (m['arrived'] as num?)?.toInt() ?? 0,
+    cancelled: (m['cancelled'] as num?)?.toInt() ?? 0,
   );
   Map<String, Object?> toMap() => {
     'id': id,
     'name': name,
     'created_at': createdAt,
     'updated_at': updatedAt,
+    'is_closed': isClosed ? 1 : 0,
   };
 }
 
@@ -117,13 +137,19 @@ class PurchaseOrder {
     required this.status,
     required this.createdAt,
     required this.updatedAt,
+    this.purchaseTotal,
+    this.accountName,
   });
   final int id, accountId;
   final int? productId;
   final String productName;
+  final String? accountName;
   final int quantity, purchase, sale, createdAt, updatedAt;
+  final int? purchaseTotal;
   final OrderStatus status;
-  int get cost => quantity * purchase;
+  int get cost => purchaseTotal ?? quantity * purchase;
+  bool get approximateUnit =>
+      purchaseTotal != null && cost != quantity * purchase;
   int get revenue => quantity * sale;
   int get profit => revenue - cost;
   factory PurchaseOrder.fromMap(Map<String, Object?> m) => PurchaseOrder(
@@ -137,6 +163,8 @@ class PurchaseOrder {
     status: OrderStatus.values.byName(m['status'] as String),
     createdAt: m['created_at'] as int,
     updatedAt: m['updated_at'] as int,
+    purchaseTotal: m['purchase_total'] as int?,
+    accountName: m['account_name'] as String?,
   );
   Map<String, Object?> toMap() => {
     'id': id,
@@ -149,6 +177,7 @@ class PurchaseOrder {
     'status': status.name,
     'created_at': createdAt,
     'updated_at': updatedAt,
+    'purchase_total': purchaseTotal,
   };
 }
 
@@ -176,14 +205,16 @@ class Report {
       arrivedSales,
       refund;
   int get net => spent - refund;
+  int get grossProfit => expectedProfit + realizedProfit;
   factory Report.fromOrders(
     Iterable<PurchaseOrder> items, {
     int accounts = 0,
     int products = 0,
+    int receivedProfit = 0,
   }) {
     var count = 0, pieces = 0, pending = 0, arrived = 0, cancelled = 0;
     var spent = 0, expectedSales = 0, expectedProfit = 0;
-    var realizedProfit = 0, arrivedSales = 0, refund = 0;
+    var arrivedSales = 0, refund = 0;
     for (final o in items) {
       count++;
       pieces += o.quantity;
@@ -201,7 +232,6 @@ class Report {
           expectedSales += o.revenue;
           expectedProfit += o.profit;
           arrivedSales += o.revenue;
-          realizedProfit += o.profit;
       }
     }
     return Report(
@@ -214,8 +244,8 @@ class Report {
       cancelled: cancelled,
       spent: spent,
       expectedSales: expectedSales,
-      expectedProfit: expectedProfit,
-      realizedProfit: realizedProfit,
+      expectedProfit: expectedProfit - receivedProfit,
+      realizedProfit: receivedProfit,
       arrivedSales: arrivedSales,
       refund: refund,
     );
@@ -236,12 +266,38 @@ class Report {
       cancelled: n('cancelled'),
       spent: n('spent'),
       expectedSales: n('expected_sales'),
-      expectedProfit: n('expected_profit'),
-      realizedProfit: n('realized_profit'),
+      expectedProfit: n('expected_profit') - n('received_profit'),
+      realizedProfit: n('received_profit'),
       arrivedSales: n('arrived_sales'),
       refund: n('refund'),
     );
   }
+}
+
+class ProfitReceipt {
+  const ProfitReceipt({
+    required this.id,
+    required this.amount,
+    required this.note,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  final int id, amount, createdAt, updatedAt;
+  final String note;
+  factory ProfitReceipt.fromMap(Map<String, Object?> row) => ProfitReceipt(
+    id: row['id'] as int,
+    amount: row['amount'] as int,
+    note: row['note'] as String,
+    createdAt: row['created_at'] as int,
+    updatedAt: row['updated_at'] as int,
+  );
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'amount': amount,
+    'note': note,
+    'created_at': createdAt,
+    'updated_at': updatedAt,
+  };
 }
 
 class BackupData {
@@ -250,27 +306,30 @@ class BackupData {
     required this.accounts,
     required this.orders,
     required this.theme,
+    this.receipts = const [],
   });
   final List<Product> products;
   final List<Account> accounts;
   final List<PurchaseOrder> orders;
   final String theme;
+  final List<ProfitReceipt> receipts;
   String encode() => const JsonEncoder.withIndent('  ').convert({
     'app': 'haseela',
-    'version': 1,
+    'version': 2,
     'exported_at': DateTime.now().toUtc().toIso8601String(),
     'money_unit': 'halala',
     'theme': theme,
     'products': products.map((p) => p.toMap()).toList(),
     'accounts': accounts.map((a) => a.toMap()).toList(),
     'orders': orders.map((o) => o.toMap()).toList(),
+    'receipts': receipts.map((r) => r.toMap()).toList(),
   });
   static BackupData decode(String text) {
     try {
       final root = jsonDecode(text);
       if (root is! Map<String, dynamic> ||
           root['app'] != 'haseela' ||
-          root['version'] != 1 ||
+          ![1, 2].contains(root['version']) ||
           root['money_unit'] != 'halala' ||
           !['system', 'light', 'dark'].contains(root['theme'])) {
         throw const FormatException('ملف النسخة غير مدعوم');
@@ -295,8 +354,8 @@ class BackupData {
         }
       }
 
-      void name(Object? v) {
-        if (v is! String || v.trim().isEmpty || v.length > 120) {
+      void name(Object? v, {int limit = 120}) {
+        if (v is! String || v.trim().isEmpty || v.length > limit) {
           throw const FormatException('اسم غير صالح');
         }
       }
@@ -308,14 +367,35 @@ class BackupData {
       }
 
       final pr = rows('products'), ar = rows('accounts'), or = rows('orders');
+      final rr = root['version'] == 1
+          ? <Map<String, Object?>>[]
+          : rows('receipts');
+      final receiptIds = <int>{};
+      var receivedTotal = 0;
+      for (final r in rr) {
+        validBase(r);
+        name(r['note']);
+        price(r['amount']);
+        receivedTotal += r['amount'] as int;
+        if ((r['amount'] as int) == 0 ||
+            !receiptIds.add(r['id'] as int) ||
+            receivedTotal > maxMoney) {
+          throw const FormatException('سجل أرباح مستلمة غير صالح');
+        }
+      }
       for (final r in pr) {
         validBase(r);
         name(r['name']);
         price(r['sale']);
+        if (r['last_purchase'] != null) price(r['last_purchase']);
       }
       for (final r in ar) {
         validBase(r);
-        name(r['name']);
+        name(r['name'], limit: 254);
+        if (r['is_closed'] != null &&
+            ![0, 1, false, true].contains(r['is_closed'])) {
+          throw const FormatException('حالة الحساب غير صالحة');
+        }
       }
       final products = pr.map(Product.fromMap).toList();
       final accounts = ar.map(Account.fromMap).toList();
@@ -342,7 +422,14 @@ class BackupData {
             !orderIds.add(r['id'] as int)) {
           throw const FormatException('طلب أو علاقة غير صالحة');
         }
-        totalCost += q * (r['purchase'] as int);
+        if (r['purchase_total'] != null) {
+          price(r['purchase_total']);
+          if (unitFromTotal(r['purchase_total'] as int, q) != r['purchase']) {
+            throw const FormatException('سعر الوحدة لا يطابق إجمالي الشراء');
+          }
+        }
+        totalCost +=
+            (r['purchase_total'] as int?) ?? q * (r['purchase'] as int);
         totalSales += q * (r['sale'] as int);
         if (totalCost > maxMoney || totalSales > maxMoney) {
           throw const FormatException('الإجماليات أكبر من النطاق الآمن');
@@ -353,6 +440,7 @@ class BackupData {
         accounts: accounts,
         orders: or.map(PurchaseOrder.fromMap).toList(),
         theme: root['theme'] as String,
+        receipts: rr.map(ProfitReceipt.fromMap).toList(),
       );
     } on FormatException {
       rethrow;

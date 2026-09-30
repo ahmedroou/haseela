@@ -30,7 +30,7 @@ void main() {
     expect(report.spent, 275000);
     expect(report.expectedSales, 245000);
     expect(report.expectedProfit, 75000);
-    expect(report.realizedProfit, 45000);
+    expect(report.realizedProfit, 0);
     expect(report.refund, 105000);
     expect(report.net, 170000);
     expect(report.arrivedSales, 135000);
@@ -61,7 +61,7 @@ void main() {
       order(1, 3, 30000, 20000, OrderStatus.arrived),
     ]);
     expect(r.expectedProfit, -30000);
-    expect(r.realizedProfit, -30000);
+    expect(r.realizedProfit, 0);
     expect(Report.fromOrders([]).net, 0);
   });
   test('cancellation can be reversed without double counting', () {
@@ -70,7 +70,7 @@ void main() {
       expect(r.spent, 105000);
       expect(r.refund, s == OrderStatus.cancelled ? 105000 : 0);
       expect(r.expectedProfit, s == OrderStatus.cancelled ? 0 : 45000);
-      expect(r.realizedProfit, s == OrderStatus.arrived ? 45000 : 0);
+      expect(r.realizedProfit, 0);
     }
   });
   final valid = BackupData(
@@ -98,7 +98,7 @@ void main() {
     'rejects corrupt, duplicate, orphaned, unsafe and unsupported backups',
     () {
       final badChanges = <void Function(Map<String, dynamic>)>[
-        (m) => m['version'] = 2,
+        (m) => m['version'] = 99,
         (m) => m['theme'] = 'invalid',
         (m) => m['products'] = [...m['products'], m['products'][0]],
         (m) => m['orders'][0]['account_id'] = 99,
@@ -108,8 +108,9 @@ void main() {
         (m) => m['orders'][0]['purchase'] = .1,
         (m) => m['orders'][0]['status'] = 'sold',
         (m) => m['orders'][0]['updated_at'] = 1,
-        (m) => m['orders'][0]['sale'] = maxMoney,
+        (m) => m['orders'][0]['sale'] = maxMoney + 1,
         (m) => m['accounts'][0]['name'] = '',
+        (m) => m['accounts'][0]['is_closed'] = 'invalid',
       ];
       for (final change in badChanges) {
         final m = jsonDecode(valid.encode()) as Map<String, dynamic>;

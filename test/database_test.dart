@@ -121,7 +121,7 @@ void main() {
       var r = await db.report();
       expect(r.spent, 275000);
       expect(r.expectedProfit, 75000);
-      expect(r.realizedProfit, 45000);
+      expect(r.realizedProfit, 0);
       expect(r.refund, 105000);
       expect(r.net, 170000);
       expect(r.expectedSales, 245000);
@@ -134,9 +134,9 @@ void main() {
         status: OrderStatus.arrived,
       );
       r = await db.report();
-      expect(r.realizedProfit, 44943);
+      expect(r.realizedProfit, 0);
       await db.deleteOrder(loss);
-      expect((await db.report()).realizedProfit, 45000);
+      expect((await db.report()).realizedProfit, 0);
     },
   );
   test(
@@ -166,7 +166,7 @@ void main() {
         old: o,
       );
       expect((await db.orders(a)).single.createdAt, o.createdAt);
-      expect((await db.report()).realizedProfit, 75000);
+      expect((await db.report()).expectedProfit, 75000);
     },
   );
   test(
@@ -180,7 +180,7 @@ void main() {
       expect((await db.report()).refund, 80000);
       await db.changeStatus(o, OrderStatus.arrived);
       expect((await db.report()).refund, 0);
-      expect((await db.report()).realizedProfit, 30000);
+      expect((await db.report()).realizedProfit, 0);
       await db.deleteAccount(a);
       final r = await db.report();
       expect(r.accounts, 1);
@@ -274,7 +274,7 @@ void main() {
     expect(store.busy, false);
     store.dispose();
   });
-  test('v1 to v3 migration keeps existing data and adds product index', () async {
+  test('v1 to v5 migration keeps existing data and adds product index', () async {
     final a = await db.saveAccount('قبل التحديث');
     await addOrder(a, null);
     await db.setTheme('dark');
@@ -283,7 +283,7 @@ void main() {
     final path = db.db.path;
     await db.close();
     db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-    expect(await db.db.getVersion(), 3);
+    expect(await db.db.getVersion(), 5);
     expect((await db.report()).spent, 80000);
     expect(await db.theme(), 'dark');
     expect(
@@ -292,6 +292,30 @@ void main() {
       ),
       isNotEmpty,
     );
+  });
+
+  test('closed accounts prevent new orders and can be toggled', () async {
+    final a = await db.saveAccount('حساب تجريبي');
+    expect((await db.account(a))!.isClosed, false);
+    await db.toggleAccountClosed(a, true);
+    expect((await db.account(a))!.isClosed, true);
+    await expectLater(addOrder(a, null), throwsA(isA<StateError>()));
+    await db.toggleAccountClosed(a, false);
+    expect((await db.account(a))!.isClosed, false);
+    final o = await addOrder(a, null);
+    expect(o, isPositive);
+
+    final a2 = await db.saveAccount('حساب يبدأ مغلقاً', isClosed: true);
+    final acc2 = (await db.account(a2))!;
+    expect(acc2.isClosed, true);
+    final all = await db.accounts();
+    expect(all.firstWhere((x) => x.id == a2).isClosed, true);
+
+    await db.saveAccount('حساب معدل', old: acc2);
+    expect((await db.account(a2))!.isClosed, true);
+
+    await db.saveAccount('حساب معاد فتحه', old: acc2, isClosed: false);
+    expect((await db.account(a2))!.isClosed, false);
   });
 
   test('10000 orders aggregate and paginate without loading all rows', () async {
