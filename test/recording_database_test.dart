@@ -150,11 +150,14 @@ void main() {
       expect((await db.account(another))!.isEmail, isFalse);
       expect((await db.account(another))!.pieces, 8);
       await db.toggleAccountClosed(account, true);
-      expect((await db.accounts(openOnly: true)).single.id, another);
+      expect(
+        (await db.accounts(filter: AccountFilter.open)).single.id,
+        another,
+      );
     },
   );
   test(
-    'format 2 backups keep exact totals, last price, closure and receipts; format 1 stays readable',
+    'format 3 backups keep exact totals, last price, closure and receipts; format 1 stays readable',
     () async {
       await add(quantity: 3, purchase: 3333, total: 10000, sale: 5000);
       await db.saveReceipt(2500, 'أرباح فعلية');
@@ -164,6 +167,10 @@ void main() {
       await db.saveAccount('حساب سيُستبدل');
       await db.restore(data);
       expect((await db.account(account))!.isClosed, isTrue);
+      expect(
+        (await db.account(account))!.closedAt,
+        snapshot.accounts.single.closedAt,
+      );
       expect((await db.product(product))!.lastPurchase, 3333);
       expect((await db.orders(account)).single.cost, 10000);
       expect((await db.report()).realizedProfit, 2500);
@@ -247,7 +254,7 @@ void main() {
       );
       await old.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 5);
+      expect(await db.db.getVersion(), 6);
       expect((await db.product(1))!.lastPurchase, 8000);
       expect((await db.orders(1)).length, 2);
       expect((await db.report()).spent, 15500);

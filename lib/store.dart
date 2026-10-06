@@ -13,7 +13,7 @@ class AppStore extends ChangeNotifier {
   ThemeMode get themeMode => ThemeMode.values.byName(theme);
   Future<void> load() async {
     report = await database.report();
-    recent = await database.accounts(limit: 5);
+    recent = await database.accounts(filter: AccountFilter.open, limit: 5);
     theme = await database.theme();
     revision++;
     notifyListeners();

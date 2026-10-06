@@ -2,7 +2,9 @@
 
 المستودع العام: https://github.com/ahmedroou/haseela
 
-1. غيّري version في pubspec.yaml من 1.0.1+2 إلى رقم أعلى، مثل 1.0.2+3. لا تعيدي استخدام رقم البناء ولا المفتاح.
+التطبيق يفحص الإصدارات دون تسجيل دخول. لكي يعمل زر التحديث، يجب أن يكون مستودع الإصدارات عامًا، وأن تنجح قراءة `https://api.github.com/repos/ahmedroou/haseela/releases/latest` دون بيانات اعتماد. المستودع الخاص يعيد 404 للتطبيق، حتى لو استطاع صاحب الحساب مشاهدة الإصدار من المتصفح.
+
+1. غيّري version في pubspec.yaml إلى رقم إصدار وبناء أعلى. يجب الحفاظ على مفتاح التوقيع الأصلي نفسه، وعدم إعادة استخدام رقم البناء.
 2. شغّلي flutter analyze ثم flutter test --reporter expanded.
 3. شغّلي flutter build apk --release --split-per-abi بالمفتاح الأصلي الخارجي. لا ترفعيه ولا كلمات مروره إلى GitHub.
 4. انسخي APKs من build/app/outputs/flutter-apk إلى artifacts/releases بالأسماء haseela-VERSION-arm64-v8a.apk وhaseela-VERSION-armeabi-v7a.apk وhaseela-VERSION-x86_64.apk، مع استبدال VERSION.

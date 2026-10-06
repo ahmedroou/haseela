@@ -194,6 +194,34 @@ class AccountTile extends StatelessWidget {
                   ),
               ],
             ),
+            if (account.isClosed)
+              Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: TextButton.icon(
+                  key: ValueKey('reopen_account_${account.id}'),
+                  onPressed: store.busy
+                      ? null
+                      : () async {
+                          try {
+                            await store.mutate(
+                              () => store.database.toggleAccountClosed(
+                                account.id,
+                                false,
+                              ),
+                            );
+                            if (context.mounted) {
+                              notice(context, 'أُعيد فتح الحساب');
+                            }
+                          } catch (e) {
+                            if (context.mounted) {
+                              notice(context, friendlyError(e));
+                            }
+                          }
+                        },
+                  icon: const Icon(Icons.lock_open_rounded, size: 17),
+                  label: const Text('إعادة فتح الحساب'),
+                ),
+              ),
           ],
         ),
       ),

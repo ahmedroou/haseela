@@ -17,7 +17,7 @@ class AppDatabase {
     final db = await f.openDatabase(
       location,
       options: OpenDatabaseOptions(
-        version: 5,
+        version: 6,
         onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: (db, version) async {
           await db.execute('''CREATE TABLE products (
@@ -28,7 +28,8 @@ class AppDatabase {
           await db.execute('''CREATE TABLE accounts (
           id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
           created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-          is_closed INTEGER NOT NULL DEFAULT 0)''');
+          is_closed INTEGER NOT NULL DEFAULT 0, closed_at INTEGER)''');
+          await _createAccountIndexes(db);
           await db.execute('''CREATE TABLE orders (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -97,6 +98,18 @@ class AppDatabase {
               );
             }
           }
+          if (oldVersion < 6) {
+            final columns = await db.rawQuery('PRAGMA table_info(accounts)');
+            if (!columns.any((r) => r['name'] == 'closed_at')) {
+              await db.execute(
+                'ALTER TABLE accounts ADD COLUMN closed_at INTEGER',
+              );
+            }
+            // The original closing time is unknown for pre-v6 accounts.
+            await db.execute('''UPDATE accounts SET closed_at = updated_at
+              WHERE is_closed = 1 AND closed_at IS NULL''');
+            await _createAccountIndexes(db);
+          }
         },
         onDowngrade: (db, oldVersion, newVersion) async =>
             throw StateError('قاعدة البيانات من إصدار أحدث؛ حدّثي التطبيق'),
@@ -131,6 +144,15 @@ class AppDatabase {
     );
     await db.execute(
       'CREATE INDEX IF NOT EXISTS receipt_date ON profit_receipts(created_at DESC, id DESC)',
+    );
+  }
+
+  static Future<void> _createAccountIndexes(DatabaseExecutor db) async {
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS account_closed_date ON accounts(is_closed, closed_at ASC, id ASC)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS account_open_date ON accounts(is_closed, created_at DESC, id DESC)',
     );
   }
 
@@ -175,37 +197,47 @@ class AppDatabase {
 
   Future<int> saveAccount(String name, {Account? old, bool? isClosed}) async {
     _name(name, limit: 254);
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final closed = isClosed ?? old?.isClosed ?? false;
-    final values = {
-      'name': name.trim(),
-      'created_at': old?.createdAt ?? now,
-      'updated_at': now,
-      'is_closed': closed ? 1 : 0,
-    };
-    if (old == null) return db.insert('accounts', values);
-    final changed = await db.update(
-      'accounts',
-      values,
-      where: 'id = ?',
-      whereArgs: [old.id],
-    );
-    if (changed == 0) throw StateError('الحساب لم يعد موجودًا');
-    return old.id;
+    return db.transaction((tx) async {
+      final current = old == null ? null : await _accountRow(tx, old.id);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final closed = isClosed ?? current?.isClosed ?? false;
+      final values = {
+        'name': name.trim(),
+        'created_at': current?.createdAt ?? now,
+        'updated_at': now,
+        'is_closed': closed ? 1 : 0,
+        'closed_at': closed
+            ? (current?.isClosed == true ? current!.closedAt : now)
+            : null,
+      };
+      if (old == null) return tx.insert('accounts', values);
+      await tx.update('accounts', values, where: 'id = ?', whereArgs: [old.id]);
+      return old.id;
+    });
   }
 
-  Future<void> toggleAccountClosed(int id, bool isClosed) async {
-    final changed = await db.update(
-      'accounts',
-      {
-        'is_closed': isClosed ? 1 : 0,
-        'updated_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      where: 'id = ?',
-      whereArgs: [id],
-    );
-    if (changed == 0) throw StateError('الحساب لم يعد موجودًا');
+  static Future<Account> _accountRow(DatabaseExecutor tx, int id) async {
+    final rows = await tx.query('accounts', where: 'id = ?', whereArgs: [id]);
+    if (rows.isEmpty) throw StateError('الحساب لم يعد موجودًا');
+    return Account.fromMap(rows.single);
   }
+
+  Future<void> toggleAccountClosed(int id, bool isClosed) =>
+      db.transaction((tx) async {
+        final current = await _accountRow(tx, id);
+        if (current.isClosed == isClosed) return;
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await tx.update(
+          'accounts',
+          {
+            'is_closed': isClosed ? 1 : 0,
+            'closed_at': isClosed ? now : null,
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [id],
+        );
+      });
 
   Future<int> saveOrder({
     required int accountId,
@@ -279,7 +311,7 @@ class AppDatabase {
       if (productId != null) {
         await tx.update(
           'products',
-          {'last_purchase': purchase},
+          {'last_purchase': purchase, 'updated_at': now},
           where: 'id = ?',
           whereArgs: [productId],
         );
@@ -332,21 +364,31 @@ class AppDatabase {
       .replaceAll('_', '\\_');
   Future<List<Account>> accounts({
     String search = '',
-    bool openOnly = false,
+    AccountFilter filter = AccountFilter.all,
     int offset = 0,
     int limit = 40,
-  }) async => (await db.rawQuery(
-    '''SELECT a.*, $_accountSummary
-      FROM (SELECT * FROM accounts WHERE 1=1 ${openOnly ? 'AND is_closed=0' : ''} ${search.trim().isEmpty ? '' : "AND name LIKE ? ESCAPE '\\'"}
-        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?) a
+  }) async {
+    final condition = switch (filter) {
+      AccountFilter.all => '',
+      AccountFilter.open => 'AND is_closed=0',
+      AccountFilter.closed => 'AND is_closed=1',
+    };
+    final date = filter == AccountFilter.closed ? 'closed_at' : 'created_at';
+    final direction = filter == AccountFilter.closed ? 'ASC' : 'DESC';
+    return (await db.rawQuery(
+      '''SELECT a.*, $_accountSummary
+      FROM (SELECT * FROM accounts WHERE 1=1 $condition ${search.trim().isEmpty ? '' : "AND name LIKE ? ESCAPE '\\'"}
+        ORDER BY $date $direction, id $direction LIMIT ? OFFSET ?) a
       LEFT JOIN orders o ON o.account_id = a.id
-      GROUP BY a.id ORDER BY a.created_at DESC, a.id DESC''',
-    [
-      if (search.trim().isNotEmpty) '%${_escapeLike(search.trim())}%',
-      limit,
-      offset,
-    ],
-  )).map(Account.fromMap).toList();
+      GROUP BY a.id ORDER BY a.$date $direction, a.id $direction''',
+      [
+        if (search.trim().isNotEmpty) '%${_escapeLike(search.trim())}%',
+        limit,
+        offset,
+      ],
+    )).map(Account.fromMap).toList();
+  }
+
   Future<Account?> account(int id) async {
     final rows = await db.rawQuery(
       '''SELECT a.*, $_accountSummary FROM accounts a

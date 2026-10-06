@@ -274,7 +274,7 @@ void main() {
     expect(store.busy, false);
     store.dispose();
   });
-  test('v1 to v5 migration keeps existing data and adds product index', () async {
+  test('v1 to v6 migration keeps existing data and adds product index', () async {
     final a = await db.saveAccount('قبل التحديث');
     await addOrder(a, null);
     await db.setTheme('dark');
@@ -283,7 +283,7 @@ void main() {
     final path = db.db.path;
     await db.close();
     db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-    expect(await db.db.getVersion(), 5);
+    expect(await db.db.getVersion(), 6);
     expect((await db.report()).spent, 80000);
     expect(await db.theme(), 'dark');
     expect(

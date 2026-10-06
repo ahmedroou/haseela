@@ -25,8 +25,11 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) => PagedList<Account>(
     id: (a) => a.id,
     revision: store.revision,
-    load: (offset, limit) =>
-        store.database.accounts(offset: offset, limit: limit),
+    load: (offset, limit) => store.database.accounts(
+      filter: AccountFilter.open,
+      offset: offset,
+      limit: limit,
+    ),
     header: Padding(
       padding: const EdgeInsets.fromLTRB(24, 18, 24, 12),
       child: Column(
@@ -88,7 +91,9 @@ class HomePage extends StatelessWidget {
       ),
     ),
     empty: EmptyState(
-      title: 'ابدئي بإضافة أول حساب ✨',
+      title: store.report.accounts == 0
+          ? 'ابدئي بإضافة أول حساب ✨'
+          : 'لا توجد حسابات مفتوحة حاليًا',
       subtitle: 'بريد إلكتروني أو اسم تختارينه، ثم أضيفي طلبك.',
       icon: Icons.mark_email_unread_outlined,
       button: 'إضافة حساب',
@@ -145,7 +150,7 @@ class _AccountPickerState extends State<AccountPicker> {
     try {
       final result = await widget.store.database.accounts(
         search: query.text,
-        openOnly: true,
+        filter: AccountFilter.open,
         offset: accounts.length,
       );
       if (!mounted || token != generation) return;
@@ -217,7 +222,13 @@ class _AccountPickerState extends State<AccountPicker> {
                     ),
                   )
                 : accounts.isEmpty && !loading
-                ? const Center(child: Text('لا توجد حسابات مطابقة'))
+                ? Center(
+                    child: Text(
+                      query.text.trim().isEmpty
+                          ? 'لا توجد حسابات مفتوحة؛ أضيفي حسابًا أو أعيدي فتح حساب مغلق.'
+                          : 'لا توجد حسابات مطابقة',
+                    ),
+                  )
                 : ListView.builder(
                     controller: scroll,
                     itemCount: accounts.length + (more || loading ? 1 : 0),

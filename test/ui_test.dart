@@ -144,6 +144,170 @@ void main() {
   }
 
   testWidgets(
+    'closed accounts move immediately between lists and reopen from card, details and form',
+    (tester) async {
+      late int accountId;
+      await tester.runAsync(() async {
+        accountId = await db.saveAccount('حساب محفوظ');
+        await db.saveOrder(
+          accountId: accountId,
+          productId: null,
+          productName: 'طلب محفوظ',
+          quantity: 2,
+          purchase: 10000,
+          sale: 15000,
+          status: OrderStatus.arrived,
+        );
+        await db.saveReceipt(1000, 'أرباح محفوظة');
+        await store.load();
+      });
+      await launch(tester);
+      final menu = find.byTooltip('خيارات الحساب');
+      await tester.ensureVisible(menu);
+      await tester.pumpAndSettle();
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.widgetWithText(PopupMenuItem<String>, 'إغلاق الحساب'),
+      );
+      await flush(tester);
+      expect(find.text('حساب محفوظ'), findsNothing);
+      expect(store.report.orders, 1);
+      expect(store.report.spent, 20000);
+      expect(store.report.realizedProfit, 1000);
+      await tester.tap(find.text('الحسابات').hitTestable());
+      await flush(tester);
+      expect(find.text('حساب محفوظ'), findsNothing);
+      await tester.tap(find.text('الرئيسية').hitTestable());
+      await flush(tester);
+      await tester.tap(find.byKey(const ValueKey('closed_accounts')));
+      await flush(tester);
+      expect(find.text('حساب محفوظ'), findsOneWidget);
+      final reopen = find.byKey(ValueKey('reopen_account_$accountId'));
+      await tester.ensureVisible(reopen);
+      await tester.tap(reopen);
+      await flush(tester);
+      expect(find.text('لا توجد حسابات مغلقة'), findsOneWidget);
+      await tester.tap(find.byType(BackButton));
+      await flush(tester);
+      expect(find.text('حساب محفوظ'), findsOneWidget);
+      await tester.ensureVisible(find.text('حساب محفوظ'));
+      await tester.tap(find.text('حساب محفوظ'));
+      await flush(tester);
+      await tester.tap(find.byTooltip('إغلاق الحساب'));
+      await flush(tester);
+      expect(find.byType(FloatingActionButton), findsNothing);
+      expect(find.text('طلب محفوظ'), findsOneWidget);
+      await tester.tap(find.byType(BackButton));
+      await flush(tester);
+      expect(find.text('حساب محفوظ'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('closed_accounts')));
+      await flush(tester);
+      await tester.tap(find.text('حساب محفوظ'));
+      await flush(tester);
+      // Existing orders remain accessible and editable while the account is closed.
+      await tester.tap(find.text('وصل').hitTestable());
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.widgetWithText(PopupMenuItem<OrderStatus>, 'قيد الانتظار'),
+      );
+      await flush(tester);
+      expect(store.report.pending, 1);
+      await tester.tap(find.byTooltip('إعادة فتح الحساب'));
+      await flush(tester);
+      expect(find.byType(FloatingActionButton), findsOneWidget);
+      await tester.tap(find.byTooltip('إغلاق الحساب'));
+      await flush(tester);
+      await tester.tap(find.byTooltip('تعديل الحساب'));
+      await flush(tester);
+      await tester.tap(find.byType(Switch));
+      await tester.tap(find.byKey(const ValueKey('save_form')));
+      await flush(tester);
+      expect(find.byType(FloatingActionButton), findsOneWidget);
+      await tester.tap(find.byType(BackButton));
+      await flush(tester);
+      expect(find.text('لا توجد حسابات مغلقة'), findsOneWidget);
+      await tester.tap(find.byType(BackButton));
+      await flush(tester);
+      expect(find.text('حساب محفوظ'), findsOneWidget);
+      expect(store.report.orders, 1);
+      expect(store.report.spent, 20000);
+      expect(store.report.realizedProfit, 1000);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    },
+  );
+
+  testWidgets(
+    'account created closed is archived and picker offers adding an open account',
+    (tester) async {
+      await launch(tester);
+      await tester.tap(find.text('إضافة حساب').first);
+      await flush(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('account_name')),
+        'من النموذج',
+      );
+      await tester.tap(find.byType(Switch));
+      await tester.tap(find.byKey(const ValueKey('save_form')));
+      await flush(tester);
+      expect(find.text('من النموذج'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('home_new_order')));
+      await flush(tester);
+      expect(find.byType(AccountPicker), findsOneWidget);
+      expect(find.text('من النموذج'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('add_account_from_picker')),
+        findsOneWidget,
+      );
+      await tester.binding.handlePopRoute();
+      await flush(tester);
+      await tester.tap(find.byKey(const ValueKey('closed_accounts')));
+      await flush(tester);
+      expect(find.text('من النموذج'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    },
+  );
+
+  testWidgets(
+    'closed archive renders light, dark and narrow large-text layouts',
+    (tester) async {
+      await tester.runAsync(() async {
+        await db.saveAccount('riham@example.com', isClosed: true);
+        await db.saveAccount(
+          'حساب الطلبات المحفوظة مع اسم طويل لعرض جميع التفاصيل',
+          isClosed: true,
+        );
+        await store.load();
+      });
+      await launch(tester);
+      await screenshot(tester, 'home-closed-accounts');
+      await tester.tap(find.byKey(const ValueKey('closed_accounts')));
+      await flush(tester);
+      await screenshot(tester, 'closed-accounts-light');
+      await tester.runAsync(() => store.setTheme('dark'));
+      await flush(tester);
+      await screenshot(tester, 'closed-accounts-dark');
+      await launch(tester, size: const Size(320, 640), scale: 1.8);
+      expect(
+        MediaQuery.textScalerOf(
+          tester.element(find.text('حساباتك المحفوظة')),
+        ).scale(10),
+        18,
+      );
+      await screenshot(tester, 'closed-accounts-small-large-text');
+      await tester.tap(find.byType(BackButton));
+      await flush(tester);
+      await screenshot(tester, 'home-archive-small-large-text');
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    },
+  );
+
+  testWidgets(
     'dashboard, dark mode, products and account render without overflow',
     (tester) async {
       await tester.runAsync(seed);

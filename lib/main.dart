@@ -243,6 +243,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             ),
           ),
           actions: [
+            if (selected == 0)
+              IconButton(
+                key: const ValueKey('closed_accounts'),
+                tooltip: 'الحسابات المغلقة',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ClosedAccountsPage(store: widget.store),
+                  ),
+                ),
+                icon: const Icon(Icons.inventory_2_outlined, size: 22),
+              ),
             AnimatedBuilder(
               animation: updates,
               builder: (context, _) => IconButton(

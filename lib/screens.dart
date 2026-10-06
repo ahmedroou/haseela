@@ -729,14 +729,19 @@ class AccountsPage extends StatelessWidget {
   Widget build(BuildContext context) => PagedList<Account>(
     id: (a) => a.id,
     revision: store.revision,
-    load: (offset, limit) =>
-        store.database.accounts(offset: offset, limit: limit),
+    load: (offset, limit) => store.database.accounts(
+      filter: AccountFilter.open,
+      offset: offset,
+      limit: limit,
+    ),
     header: PageHeading(
       title: 'حساباتك',
       subtitle: 'كل مجموعة طلبات، في مساحة خاصة.',
     ),
     empty: EmptyState(
-      title: 'ابدئي بإضافة أول حساب ✨',
+      title: store.report.accounts == 0
+          ? 'ابدئي بإضافة أول حساب ✨'
+          : 'لا توجد حسابات مفتوحة حاليًا',
       subtitle: 'شهر جديد، شحنة جديدة، أو اسم تحبينه.',
       icon: Icons.folder_open_rounded,
       button: 'إضافة حساب',
@@ -750,6 +755,52 @@ class AccountsPage extends StatelessWidget {
           account: a,
           store: store,
           onOpen: () => openAccount(a),
+        ),
+      ),
+    ),
+  );
+}
+
+class ClosedAccountsPage extends StatelessWidget {
+  const ClosedAccountsPage({super.key, required this.store});
+  final AppStore store;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: store,
+    builder: (context, _) => Scaffold(
+      appBar: AppBar(title: const Text('الحسابات المغلقة')),
+      body: PagedList<Account>(
+        id: (a) => a.id,
+        revision: store.revision,
+        load: (offset, limit) => store.database.accounts(
+          filter: AccountFilter.closed,
+          offset: offset,
+          limit: limit,
+        ),
+        header: const PageHeading(
+          title: 'حساباتك المحفوظة',
+          subtitle:
+              'من الأقدم إغلاقًا للأحدث. طلباتها ومبالغها ضمن التقرير العام.',
+        ),
+        empty: const EmptyState(
+          title: 'لا توجد حسابات مغلقة',
+          subtitle:
+              'الحسابات التي تغلقينها ستظهر هنا، ويمكن إعادة فتحها في أي وقت.',
+          icon: Icons.inventory_2_outlined,
+        ),
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+        item: (a) => Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: AccountTile(
+            account: a,
+            store: store,
+            onOpen: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => AccountPage(store: store, account: a),
+              ),
+            ),
+          ),
         ),
       ),
     ),

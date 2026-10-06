@@ -9,6 +9,8 @@ enum OrderStatus {
   final String label;
 }
 
+enum AccountFilter { all, open, closed }
+
 String normalizeDigits(String text) {
   const arabic = '٠١٢٣٤٥٦٧٨٩', persian = '۰۱۲۳۴۵۶۷۸۹';
   for (var i = 0; i < 10; i++) {
@@ -92,6 +94,7 @@ class Account {
     required this.createdAt,
     required this.updatedAt,
     this.isClosed = false,
+    this.closedAt,
     this.orderCount = 0,
     this.pieces = 0,
     this.pending = 0,
@@ -102,6 +105,7 @@ class Account {
   final String name;
   final int createdAt, updatedAt, orderCount;
   final bool isClosed;
+  final int? closedAt;
   final int pieces, pending, arrived, cancelled;
   bool get isEmail => RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(name);
   factory Account.fromMap(Map<String, Object?> m) => Account(
@@ -110,6 +114,7 @@ class Account {
     createdAt: m['created_at'] as int,
     updatedAt: m['updated_at'] as int,
     isClosed: m['is_closed'] == 1 || m['is_closed'] == true,
+    closedAt: m['closed_at'] as int?,
     orderCount: m['order_count'] as int? ?? 0,
     pieces: (m['pieces'] as num?)?.toInt() ?? 0,
     pending: (m['pending'] as num?)?.toInt() ?? 0,
@@ -122,6 +127,7 @@ class Account {
     'created_at': createdAt,
     'updated_at': updatedAt,
     'is_closed': isClosed ? 1 : 0,
+    'closed_at': closedAt,
   };
 }
 
@@ -315,7 +321,7 @@ class BackupData {
   final List<ProfitReceipt> receipts;
   String encode() => const JsonEncoder.withIndent('  ').convert({
     'app': 'haseela',
-    'version': 2,
+    'version': 3,
     'exported_at': DateTime.now().toUtc().toIso8601String(),
     'money_unit': 'halala',
     'theme': theme,
@@ -329,7 +335,7 @@ class BackupData {
       final root = jsonDecode(text);
       if (root is! Map<String, dynamic> ||
           root['app'] != 'haseela' ||
-          ![1, 2].contains(root['version']) ||
+          ![1, 2, 3].contains(root['version']) ||
           root['money_unit'] != 'halala' ||
           !['system', 'light', 'dark'].contains(root['theme'])) {
         throw const FormatException('ملف النسخة غير مدعوم');
@@ -395,6 +401,20 @@ class BackupData {
         if (r['is_closed'] != null &&
             ![0, 1, false, true].contains(r['is_closed'])) {
           throw const FormatException('حالة الحساب غير صالحة');
+        }
+        final closed = r['is_closed'] == 1 || r['is_closed'] == true;
+        // Older backups did not record the closing time. Their last change is
+        // the best available estimate, as in the database migration.
+        if (root['version'] != 3) {
+          r['closed_at'] = closed ? r['updated_at'] : null;
+        }
+        final closedAt = r['closed_at'];
+        if (closed
+            ? closedAt is! int ||
+                  closedAt < (r['created_at'] as int) ||
+                  closedAt > (r['updated_at'] as int)
+            : closedAt != null) {
+          throw const FormatException('تاريخ إغلاق الحساب غير صالح');
         }
       }
       final products = pr.map(Product.fromMap).toList();
