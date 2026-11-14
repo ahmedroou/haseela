@@ -874,7 +874,7 @@ Future<void> restoreBackup(
     final ok = await confirm(
       context,
       'استعادة النسخة؟',
-      'تحتوي على ${backup.accounts.length} حساب و${backup.products.length} منتج و${backup.orders.length} طلب و${backup.receipts.length} سجل أرباح مستلمة.\n\nستستبدل بياناتك الحالية. سنحفظ نسخة أمان قبل الاستبدال، ويمكنك استعادتها من القائمة.',
+      'تحتوي على ${backup.accounts.length} حساب و${backup.products.length} منتج و${backup.orders.length} طلب و${backup.receipts.length} سجل أرباح مستلمة و${backup.sideCosts.length} تكلفة جانبية.\n\nستستبدل بياناتك الحالية. سنحفظ نسخة أمان قبل الاستبدال، ويمكنك استعادتها من القائمة.',
       button: 'استعادة',
       destructive: false,
     );

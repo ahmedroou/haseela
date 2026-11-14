@@ -283,7 +283,7 @@ void main() {
     final path = db.db.path;
     await db.close();
     db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-    expect(await db.db.getVersion(), 6);
+    expect(await db.db.getVersion(), 7);
     expect((await db.report()).spent, 80000);
     expect(await db.theme(), 'dark');
     expect(

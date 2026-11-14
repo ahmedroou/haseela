@@ -784,6 +784,67 @@ void main() {
     },
   );
 
+  testWidgets('add side costs from home, then manage them from reports', (
+    tester,
+  ) async {
+    await tester.runAsync(seed);
+    await launch(tester, size: const Size(320, 640), scale: 1.4);
+
+    final addFromHome = find.byKey(const ValueKey('home_add_side_cost'));
+    final amount = find.byKey(const ValueKey('side_cost_amount'));
+    final note = find.byKey(const ValueKey('side_cost_note'));
+    final save = find.byKey(const ValueKey('save_form'));
+
+    await tester.tap(addFromHome);
+    await flush(tester);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(find.text('أدخلي مبلغًا أكبر من صفر'), findsOneWidget);
+    await tester.enterText(amount, '٢٥٫٠٥');
+    await tester.tap(save);
+    await flush(tester);
+    expect(store.report.sideCosts, 2505);
+    expect(store.report.spent, 277505);
+    expect(store.report.expectedProfit, 72495);
+
+    await tester.tap(find.text('التقارير').hitTestable());
+    await flush(tester);
+    final journal = find.byKey(const ValueKey('side_costs_report'));
+    await tester.ensureVisible(journal);
+    await tester.tap(journal);
+    await flush(tester);
+    expect(find.byType(SideCostsPage), findsOneWidget);
+    expect(find.text('تكلفة جانبية'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('add_side_cost_from_history')));
+    await flush(tester);
+    await tester.enterText(amount, '10');
+    await tester.enterText(note, 'تغليف');
+    await tester.tap(save);
+    await flush(tester);
+    expect(store.report.sideCosts, 3505);
+
+    await tester.tap(find.text('تغليف'));
+    await flush(tester);
+    await tester.enterText(amount, '15');
+    await tester.tap(save);
+    await flush(tester);
+    expect(store.report.sideCosts, 4005);
+
+    await tester.tap(find.byTooltip('خيارات المبلغ').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('حذف'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'حذف'));
+    await flush(tester);
+    expect(find.text('تغليف'), findsNothing);
+    expect(store.report.sideCosts, 2505);
+    expect(store.report.expectedProfit, 72495);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await flush(tester);
+  });
+
   testWidgets('failed save preserves fields and shows actionable error', (
     tester,
   ) async {

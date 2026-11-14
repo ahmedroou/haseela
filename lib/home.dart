@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'design.dart';
 import 'domain.dart';
+import 'finance.dart';
 import 'forms.dart';
 import 'screens.dart';
 import 'store.dart';
@@ -73,6 +74,15 @@ class HomePage extends StatelessWidget {
                       : () => quickOrder(context, store),
                   icon: const Icon(Icons.add_rounded),
                   label: const Text('تسجيل طلب'),
+                ),
+                const SizedBox(height: 5),
+                OutlinedButton.icon(
+                  key: const ValueKey('home_add_side_cost'),
+                  onPressed: store.busy
+                      ? null
+                      : () => sideCostSheet(context, store),
+                  icon: const Icon(Icons.payments_outlined, size: 19),
+                  label: const Text('إضافة تكلفة جانبية'),
                 ),
                 const SizedBox(height: 5),
                 TextButton.icon(

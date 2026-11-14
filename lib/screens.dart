@@ -184,7 +184,30 @@ class ReportsPage extends StatelessWidget {
                           ),
                           const SizedBox(height: 18),
                           MoneyLine(r.spent, size: 39),
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 8),
+                          TextButton(
+                            key: const ValueKey('side_costs_report'),
+                            onPressed: () => openFinancePage(
+                              context,
+                              SideCostsPage(store: store),
+                            ),
+                            child: Row(
+                              children: [
+                                const Expanded(
+                                  child: Text('التكاليف الجانبية'),
+                                ),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: MoneyLine(r.sideCosts, size: 17),
+                                ),
+                                const Icon(
+                                  Icons.chevron_left_rounded,
+                                  size: 19,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
                           Row(
                             children: [
                               Container(
@@ -228,7 +251,7 @@ class ReportsPage extends StatelessWidget {
                   icon: Icons.trending_up_rounded,
                   color: lilac,
                   detail:
-                      'ربح الطلبات غير الملغية ناقص الأرباح المستلمة المسجّلة',
+                      'ربح الطلبات غير الملغية ناقص التكاليف الجانبية والأرباح المستلمة',
                 ),
                 FinanceCard(
                   key: const ValueKey('received_profit_report_card'),

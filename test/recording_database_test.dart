@@ -134,6 +134,72 @@ void main() {
     },
   );
   test(
+    'side costs affect spending and expected profit, with optional notes and backup restore',
+    () async {
+      await add();
+      await add(purchase: 5000, status: OrderStatus.cancelled);
+      await db.saveReceipt(1000, 'مبلغ مستلم');
+      final shipping = await db.saveSideCost(2505, '  الشحن  ');
+      final extra = await db.saveSideCost(8000, '');
+      final report = await db.report();
+      expect(report.sideCosts, 10505);
+      expect(report.spent, 25505);
+      expect(report.refund, 5000);
+      expect(report.net, 20505);
+      expect(report.expectedProfit, -3005);
+      expect(report.realizedProfit, 1000);
+
+      final path = db.db.path;
+      await db.close();
+      db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
+      final costs = await db.sideCosts();
+      expect(costs.map((cost) => cost.id), [extra, shipping]);
+      expect(costs.map((cost) => cost.note), ['', 'الشحن']);
+      final snapshot = BackupData.decode((await db.snapshot()).encode());
+
+      await db.saveSideCost(1505, '', old: costs.last);
+      await db.deleteSideCost(extra);
+      expect((await db.report()).expectedProfit, 5995);
+      expect((await db.sideCosts()).single.note, isEmpty);
+      expect((await db.sideCosts()).single.createdAt, costs.last.createdAt);
+      await db.restore(snapshot);
+      expect((await db.report()).sideCosts, report.sideCosts);
+      expect((await db.report()).expectedProfit, report.expectedProfit);
+
+      final backup = jsonDecode(snapshot.encode()) as Map<String, dynamic>;
+      (backup['side_costs'] as List).first['amount'] = 0;
+      expect(
+        () => BackupData.decode(jsonEncode(backup)),
+        throwsFormatException,
+      );
+      await expectLater(db.saveSideCost(0, ''), throwsFormatException);
+
+      await db.deleteAccount(account);
+      final costsWithoutOrders = await db.report();
+      expect(costsWithoutOrders.spent, 10505);
+      expect(costsWithoutOrders.expectedProfit, -11505);
+    },
+  );
+
+  test(
+    'v6 database gains side costs without changing existing totals',
+    () async {
+      await add();
+      await db.saveReceipt(1500, 'قديم');
+      await db.db.execute('DROP TABLE side_costs');
+      await db.db.setVersion(6);
+      final path = db.db.path;
+      await db.close();
+      db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
+      expect((await db.report()).spent, 10000);
+      expect((await db.report()).expectedProfit, 7000);
+      expect(await db.sideCosts(), isEmpty);
+      await db.saveSideCost(2000, 'تغليف');
+      expect((await db.report()).expectedProfit, 5000);
+    },
+  );
+
+  test(
     'email and named account summaries/search stay isolated and complete',
     () async {
       await add(quantity: 2);
@@ -254,7 +320,7 @@ void main() {
       );
       await old.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 6);
+      expect(await db.db.getVersion(), 7);
       expect((await db.product(1))!.lastPurchase, 8000);
       expect((await db.orders(1)).length, 2);
       expect((await db.report()).spent, 15500);

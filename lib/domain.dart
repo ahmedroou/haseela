@@ -197,6 +197,7 @@ class Report {
     this.arrived = 0,
     this.cancelled = 0,
     this.spent = 0,
+    this.sideCosts = 0,
     this.expectedSales = 0,
     this.expectedProfit = 0,
     this.realizedProfit = 0,
@@ -205,6 +206,7 @@ class Report {
   });
   final int accounts, products, orders, pieces, pending, arrived, cancelled;
   final int spent,
+      sideCosts,
       expectedSales,
       expectedProfit,
       realizedProfit,
@@ -217,6 +219,7 @@ class Report {
     int accounts = 0,
     int products = 0,
     int receivedProfit = 0,
+    int sideCosts = 0,
   }) {
     var count = 0, pieces = 0, pending = 0, arrived = 0, cancelled = 0;
     var spent = 0, expectedSales = 0, expectedProfit = 0;
@@ -248,9 +251,10 @@ class Report {
       pending: pending,
       arrived: arrived,
       cancelled: cancelled,
-      spent: spent,
+      spent: spent + sideCosts,
+      sideCosts: sideCosts,
       expectedSales: expectedSales,
-      expectedProfit: expectedProfit - receivedProfit,
+      expectedProfit: expectedProfit - receivedProfit - sideCosts,
       realizedProfit: receivedProfit,
       arrivedSales: arrivedSales,
       refund: refund,
@@ -262,6 +266,7 @@ class Report {
     required int products,
   }) {
     int n(String k) => (m[k] as num?)?.toInt() ?? 0;
+    final sideCosts = n('side_costs');
     return Report(
       accounts: accounts,
       products: products,
@@ -270,9 +275,10 @@ class Report {
       pending: n('pending'),
       arrived: n('arrived'),
       cancelled: n('cancelled'),
-      spent: n('spent'),
+      spent: n('spent') + sideCosts,
+      sideCosts: sideCosts,
       expectedSales: n('expected_sales'),
-      expectedProfit: n('expected_profit') - n('received_profit'),
+      expectedProfit: n('expected_profit') - n('received_profit') - sideCosts,
       realizedProfit: n('received_profit'),
       arrivedSales: n('arrived_sales'),
       refund: n('refund'),
@@ -306,6 +312,32 @@ class ProfitReceipt {
   };
 }
 
+class SideCost {
+  const SideCost({
+    required this.id,
+    required this.amount,
+    required this.note,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  final int id, amount, createdAt, updatedAt;
+  final String note;
+  factory SideCost.fromMap(Map<String, Object?> row) => SideCost(
+    id: row['id'] as int,
+    amount: row['amount'] as int,
+    note: row['note'] as String,
+    createdAt: row['created_at'] as int,
+    updatedAt: row['updated_at'] as int,
+  );
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'amount': amount,
+    'note': note,
+    'created_at': createdAt,
+    'updated_at': updatedAt,
+  };
+}
+
 class BackupData {
   const BackupData({
     required this.products,
@@ -313,15 +345,17 @@ class BackupData {
     required this.orders,
     required this.theme,
     this.receipts = const [],
+    this.sideCosts = const [],
   });
   final List<Product> products;
   final List<Account> accounts;
   final List<PurchaseOrder> orders;
   final String theme;
   final List<ProfitReceipt> receipts;
+  final List<SideCost> sideCosts;
   String encode() => const JsonEncoder.withIndent('  ').convert({
     'app': 'haseela',
-    'version': 3,
+    'version': 4,
     'exported_at': DateTime.now().toUtc().toIso8601String(),
     'money_unit': 'halala',
     'theme': theme,
@@ -329,13 +363,14 @@ class BackupData {
     'accounts': accounts.map((a) => a.toMap()).toList(),
     'orders': orders.map((o) => o.toMap()).toList(),
     'receipts': receipts.map((r) => r.toMap()).toList(),
+    'side_costs': sideCosts.map((r) => r.toMap()).toList(),
   });
   static BackupData decode(String text) {
     try {
       final root = jsonDecode(text);
       if (root is! Map<String, dynamic> ||
           root['app'] != 'haseela' ||
-          ![1, 2, 3].contains(root['version']) ||
+          ![1, 2, 3, 4].contains(root['version']) ||
           root['money_unit'] != 'halala' ||
           !['system', 'light', 'dark'].contains(root['theme'])) {
         throw const FormatException('ملف النسخة غير مدعوم');
@@ -373,9 +408,9 @@ class BackupData {
       }
 
       final pr = rows('products'), ar = rows('accounts'), or = rows('orders');
-      final rr = root['version'] == 1
-          ? <Map<String, Object?>>[]
-          : rows('receipts');
+      final version = (root['version'] as num).toInt();
+      final rr = version == 1 ? <Map<String, Object?>>[] : rows('receipts');
+      final sr = version < 4 ? <Map<String, Object?>>[] : rows('side_costs');
       final receiptIds = <int>{};
       var receivedTotal = 0;
       for (final r in rr) {
@@ -387,6 +422,21 @@ class BackupData {
             !receiptIds.add(r['id'] as int) ||
             receivedTotal > maxMoney) {
           throw const FormatException('سجل أرباح مستلمة غير صالح');
+        }
+      }
+      final sideCostIds = <int>{};
+      var totalCost = 0;
+      for (final r in sr) {
+        validBase(r);
+        price(r['amount']);
+        final note = r['note'];
+        totalCost += r['amount'] as int;
+        if (note is! String ||
+            note.length > 120 ||
+            (r['amount'] as int) == 0 ||
+            !sideCostIds.add(r['id'] as int) ||
+            totalCost > maxMoney) {
+          throw const FormatException('سجل تكاليف جانبية غير صالح');
         }
       }
       for (final r in pr) {
@@ -405,7 +455,7 @@ class BackupData {
         final closed = r['is_closed'] == 1 || r['is_closed'] == true;
         // Older backups did not record the closing time. Their last change is
         // the best available estimate, as in the database migration.
-        if (root['version'] != 3) {
+        if (version < 3) {
           r['closed_at'] = closed ? r['updated_at'] : null;
         }
         final closedAt = r['closed_at'];
@@ -424,7 +474,7 @@ class BackupData {
       if (pids.length != products.length || aids.length != accounts.length) {
         throw const FormatException('معرّفات مكررة');
       }
-      var totalCost = 0, totalSales = 0;
+      var totalSales = 0;
       final orderIds = <int>{};
       for (final r in or) {
         validBase(r);
@@ -461,6 +511,7 @@ class BackupData {
         orders: or.map(PurchaseOrder.fromMap).toList(),
         theme: root['theme'] as String,
         receipts: rr.map(ProfitReceipt.fromMap).toList(),
+        sideCosts: sr.map(SideCost.fromMap).toList(),
       );
     } on FormatException {
       rethrow;

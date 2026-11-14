@@ -210,7 +210,7 @@ void main() {
       final path = db.db.path;
       await db.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 6);
+      expect(await db.db.getVersion(), 7);
       expect((await db.account(a))!.closedAt, 2000);
       expect((await db.account(a))!.updatedAt, 2000);
       expect((await db.account(b))!.closedAt, isNull);
@@ -228,7 +228,7 @@ void main() {
   );
 
   test(
-    'backup v3 preserves dates; legacy v1/v2 use last change, invalid dates abort restore',
+    'backups v3 and v4 preserve dates; v1/v2 use last change, invalid dates abort restore',
     () async {
       final a = await db.saveAccount('مغلق', isClosed: true);
       await db.db.update(
@@ -240,10 +240,14 @@ void main() {
       await db.saveAccount('مفتوح');
       final snapshot = await db.snapshot();
       final root = jsonDecode(snapshot.encode()) as Map<String, dynamic>;
-      expect(root['version'], 3);
+      expect(root['version'], 4);
       await db.restore(BackupData.decode(snapshot.encode()));
       expect((await db.account(a))!.closedAt, 2000);
       expect(await db.latestSafetyCopy(), isNotNull);
+      root['version'] = 3;
+      root.remove('side_costs');
+      await db.restore(BackupData.decode(jsonEncode(root)));
+      expect((await db.account(a))!.closedAt, 2000);
       for (final version in [1, 2]) {
         final legacy = jsonDecode(snapshot.encode()) as Map<String, dynamic>;
         legacy['version'] = version;

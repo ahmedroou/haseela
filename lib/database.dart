@@ -17,7 +17,7 @@ class AppDatabase {
     final db = await f.openDatabase(
       location,
       options: OpenDatabaseOptions(
-        version: 6,
+        version: 7,
         onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: (db, version) async {
           await db.execute('''CREATE TABLE products (
@@ -55,6 +55,7 @@ class AppDatabase {
             'CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
           );
           await _createReceipts(db);
+          await _createSideCosts(db);
           await _seedProducts(db);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
@@ -110,6 +111,7 @@ class AppDatabase {
               WHERE is_closed = 1 AND closed_at IS NULL''');
             await _createAccountIndexes(db);
           }
+          if (oldVersion < 7) await _createSideCosts(db);
         },
         onDowngrade: (db, oldVersion, newVersion) async =>
             throw StateError('قاعدة البيانات من إصدار أحدث؛ حدّثي التطبيق'),
@@ -144,6 +146,17 @@ class AppDatabase {
     );
     await db.execute(
       'CREATE INDEX IF NOT EXISTS receipt_date ON profit_receipts(created_at DESC, id DESC)',
+    );
+  }
+
+  static Future<void> _createSideCosts(DatabaseExecutor db) async {
+    await db.execute(
+      '''CREATE TABLE IF NOT EXISTS side_costs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, amount INTEGER NOT NULL CHECK(amount > 0),
+      note TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)''',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS side_cost_date ON side_costs(created_at DESC, id DESC)',
     );
   }
 
@@ -265,7 +278,8 @@ class AppDatabase {
     final cost = purchaseTotal ?? quantity * purchase;
     return db.transaction((tx) async {
       final sums = (await tx.rawQuery(
-        '''SELECT COALESCE(SUM(COALESCE(purchase_total, quantity * purchase)),0) cost,
+        '''SELECT COALESCE(SUM(COALESCE(purchase_total, quantity * purchase)),0)
+          + (SELECT COALESCE(SUM(amount),0) FROM side_costs) cost,
         COALESCE(SUM(quantity * sale),0) revenue FROM orders WHERE id != ?''',
         [old?.id ?? -1],
       )).single;
@@ -430,6 +444,7 @@ class AppDatabase {
       SUM(CASE WHEN status!='cancelled' THEN quantity * sale ELSE 0 END) expected_sales,
       SUM(CASE WHEN status!='cancelled' THEN quantity * sale-COALESCE(purchase_total,quantity * purchase) ELSE 0 END) expected_profit,
       (SELECT COALESCE(SUM(amount),0) FROM profit_receipts) received_profit,
+      (SELECT COALESCE(SUM(amount),0) FROM side_costs) side_costs,
       SUM(CASE WHEN status='arrived' THEN quantity * sale ELSE 0 END) arrived_sales,
       SUM(CASE WHEN status='cancelled' THEN COALESCE(purchase_total,quantity * purchase) ELSE 0 END) refund
       FROM orders''',
@@ -440,15 +455,51 @@ class AppDatabase {
       products: counts['products'] as int,
     );
   });
+
   Future<int> saveReceipt(int amount, String note, {ProfitReceipt? old}) async {
+    _name(note);
+    return _saveAmount(
+      'profit_receipts',
+      amount,
+      note,
+      id: old?.id,
+      createdAt: old?.createdAt,
+      missingMessage: 'سجل الأرباح لم يعد موجودًا',
+    );
+  }
+
+  Future<int> saveSideCost(int amount, String note, {SideCost? old}) async {
+    if (note.length > 120) {
+      throw const FormatException('اكتبي ملاحظة من 120 حرفًا أو أقل');
+    }
+    return _saveAmount(
+      'side_costs',
+      amount,
+      note,
+      id: old?.id,
+      createdAt: old?.createdAt,
+      missingMessage: 'التكلفة الجانبية لم تعد موجودة',
+    );
+  }
+
+  Future<int> _saveAmount(
+    String table,
+    int amount,
+    String note, {
+    required int? id,
+    required int? createdAt,
+    required String missingMessage,
+  }) async {
     _price(amount);
     if (amount == 0) throw const FormatException('أدخلي مبلغًا أكبر من صفر');
-    _name(note);
     return db.transaction((tx) async {
+      final orderCosts = table == 'side_costs'
+          ? '+ (SELECT COALESCE(SUM(COALESCE(purchase_total, quantity * purchase)),0) FROM orders)'
+          : '';
       final sum =
           (await tx.rawQuery(
-                'SELECT COALESCE(SUM(amount),0) total FROM profit_receipts WHERE id != ?',
-                [old?.id ?? -1],
+                'SELECT COALESCE(SUM(amount),0) $orderCosts total FROM $table WHERE id != ?',
+                [id ?? -1],
               )).single['total']
               as int;
       if (sum + amount > maxMoney) {
@@ -458,18 +509,18 @@ class AppDatabase {
       final values = {
         'amount': amount,
         'note': note.trim(),
-        'created_at': old?.createdAt ?? now,
+        'created_at': createdAt ?? now,
         'updated_at': now,
       };
-      if (old == null) return tx.insert('profit_receipts', values);
+      if (id == null) return tx.insert(table, values);
       final changed = await tx.update(
-        'profit_receipts',
+        table,
         values,
         where: 'id = ?',
-        whereArgs: [old.id],
+        whereArgs: [id],
       );
-      if (changed == 0) throw StateError('سجل الأرباح لم يعد موجودًا');
-      return old.id;
+      if (changed == 0) throw StateError(missingMessage);
+      return id;
     });
   }
 
@@ -484,6 +535,18 @@ class AppDatabase {
     offset: offset,
     limit: limit,
   )).map(ProfitReceipt.fromMap).toList();
+
+  Future<void> deleteSideCost(int id) async =>
+      db.delete('side_costs', where: 'id = ?', whereArgs: [id]);
+
+  Future<List<SideCost>> sideCosts({int offset = 0, int limit = 40}) async =>
+      (await db.query(
+        'side_costs',
+        orderBy: 'created_at DESC, id DESC',
+        offset: offset,
+        limit: limit,
+      )).map(SideCost.fromMap).toList();
+
   Future<List<PurchaseOrder>> cancelledOrders({
     int offset = 0,
     int limit = 40,
@@ -527,6 +590,7 @@ class AppDatabase {
       receipts: (await tx.query(
         'profit_receipts',
       )).map(ProfitReceipt.fromMap).toList(),
+      sideCosts: (await tx.query('side_costs')).map(SideCost.fromMap).toList(),
     );
   });
   Future<File> saveSafetyCopy() async {
@@ -560,6 +624,7 @@ class AppDatabase {
     await saveSafetyCopy(); // A failed safety copy aborts restoration.
     await db.transaction((tx) async {
       await tx.delete('profit_receipts');
+      await tx.delete('side_costs');
       await tx.delete('orders');
       await tx.delete('products');
       await tx.delete('accounts');
@@ -569,6 +634,9 @@ class AppDatabase {
       }
       for (final r in verified.receipts) {
         batch.insert('profit_receipts', r.toMap());
+      }
+      for (final cost in verified.sideCosts) {
+        batch.insert('side_costs', cost.toMap());
       }
       for (final a in verified.accounts) {
         batch.insert('accounts', a.toMap());
