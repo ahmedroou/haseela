@@ -17,7 +17,7 @@ class AppDatabase {
     final db = await f.openDatabase(
       location,
       options: OpenDatabaseOptions(
-        version: 7,
+        version: 8,
         onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: (db, version) async {
           await db.execute('''CREATE TABLE products (
@@ -56,6 +56,7 @@ class AppDatabase {
           );
           await _createReceipts(db);
           await _createSideCosts(db);
+          await _createProfitShare(db);
           await _seedProducts(db);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
@@ -112,6 +113,7 @@ class AppDatabase {
             await _createAccountIndexes(db);
           }
           if (oldVersion < 7) await _createSideCosts(db);
+          if (oldVersion < 8) await _createProfitShare(db);
         },
         onDowngrade: (db, oldVersion, newVersion) async =>
             throw StateError('قاعدة البيانات من إصدار أحدث؛ حدّثي التطبيق'),
@@ -159,6 +161,12 @@ class AppDatabase {
       'CREATE INDEX IF NOT EXISTS side_cost_date ON side_costs(created_at DESC, id DESC)',
     );
   }
+
+  static Future<void> _createProfitShare(DatabaseExecutor db) =>
+      db.execute('''CREATE TABLE IF NOT EXISTS profit_share (
+      id INTEGER PRIMARY KEY CHECK(id = 1), name TEXT NOT NULL,
+      rate INTEGER NOT NULL CHECK(rate BETWEEN 1 AND ${ProfitShare.maxRate}),
+      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)''');
 
   static Future<void> _createAccountIndexes(DatabaseExecutor db) async {
     await db.execute(
@@ -453,8 +461,40 @@ class AppDatabase {
       row,
       accounts: counts['accounts'] as int,
       products: counts['products'] as int,
+      profitShare: await _profitShare(tx),
     );
   });
+
+  static Future<ProfitShare?> _profitShare(DatabaseExecutor tx) async {
+    final rows = await tx.query('profit_share', limit: 1);
+    return rows.isEmpty ? null : ProfitShare.fromMap(rows.single);
+  }
+
+  Future<void> saveProfitShare(String name, int rate) async {
+    final cleaned = name.trim();
+    _name(cleaned);
+    if (!ProfitShare.validRate(rate)) {
+      throw const FormatException('النسبة يجب أن تكون أكبر من صفر وحتى 35٪');
+    }
+    await db.transaction((tx) async {
+      final previous = await _profitShare(tx);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final share = ProfitShare(
+        name: cleaned,
+        rate: rate,
+        createdAt: previous?.createdAt ?? now,
+        updatedAt: now,
+      );
+      await tx.insert('profit_share', {
+        'id': 1,
+        ...share.toMap(),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
+  }
+
+  Future<void> removeProfitShare() async {
+    await db.delete('profit_share');
+  }
 
   Future<int> saveReceipt(int amount, String note, {ProfitReceipt? old}) async {
     _name(note);
@@ -591,6 +631,7 @@ class AppDatabase {
         'profit_receipts',
       )).map(ProfitReceipt.fromMap).toList(),
       sideCosts: (await tx.query('side_costs')).map(SideCost.fromMap).toList(),
+      profitShare: await _profitShare(tx),
     );
   });
   Future<File> saveSafetyCopy() async {
@@ -625,6 +666,7 @@ class AppDatabase {
     await db.transaction((tx) async {
       await tx.delete('profit_receipts');
       await tx.delete('side_costs');
+      await tx.delete('profit_share');
       await tx.delete('orders');
       await tx.delete('products');
       await tx.delete('accounts');
@@ -637,6 +679,10 @@ class AppDatabase {
       }
       for (final cost in verified.sideCosts) {
         batch.insert('side_costs', cost.toMap());
+      }
+      final share = verified.profitShare;
+      if (share != null) {
+        batch.insert('profit_share', {'id': 1, ...share.toMap()});
       }
       for (final a in verified.accounts) {
         batch.insert('accounts', a.toMap());

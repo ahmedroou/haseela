@@ -89,6 +89,7 @@ class ReportsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final r = store.report;
+    final share = r.profitShare;
     final dark = Theme.of(context).brightness == Brightness.dark;
     return SingleChildScrollView(
       key: const PageStorageKey('dashboard'),
@@ -246,12 +247,19 @@ class ReportsPage extends StatelessWidget {
                   (constraints.maxWidth - (columns - 1) * 12) / columns;
               final cards = [
                 FinanceCard(
+                  key: const ValueKey('expected_profit_report_card'),
                   title: 'الربح المتوقع المتبقي',
                   value: r.expectedProfit,
                   icon: Icons.trending_up_rounded,
                   color: lilac,
                   detail:
-                      'ربح الطلبات غير الملغية ناقص التكاليف الجانبية والأرباح المستلمة',
+                      'ربح الطلبات غير الملغية ناقص التكاليف الجانبية وحصة الطرف الثالث والأرباح المستلمة',
+                  caption: share == null
+                      ? 'تحديد حصة طرف ثالث'
+                      : 'حصة ${share.name} (${moneyText(share.rate)}٪): ${moneyText(r.thirdPartyProfit)} ريال · تعديل',
+                  onTap: store.busy
+                      ? null
+                      : () => profitShareSheet(context, store),
                 ),
                 FinanceCard(
                   key: const ValueKey('received_profit_report_card'),
@@ -478,9 +486,11 @@ class FinanceCard extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.detail,
+    this.caption,
     this.onTap,
   });
   final String title, detail;
+  final String? caption;
   final int value;
   final IconData icon;
   final Color color;
@@ -513,6 +523,15 @@ class FinanceCard extends StatelessWidget {
             Text(title, style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 8),
             MoneyLine(value, size: 25),
+            if (caption case final caption?) ...[
+              const SizedBox(height: 8),
+              Text(
+                caption,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ],
           ],
         ),
       ),

@@ -187,6 +187,44 @@ class PurchaseOrder {
   };
 }
 
+class ProfitShare {
+  const ProfitShare({
+    required this.name,
+    required this.rate,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  static const maxRate = 3500;
+  final String name;
+  // Hundredths of one percent: 3500 represents 35%.
+  final int rate, createdAt, updatedAt;
+
+  static bool validRate(int rate) => rate > 0 && rate <= maxRate;
+
+  static int? parseRate(String input) {
+    final value = parseMoney(input);
+    return value != null && validRate(value) ? value : null;
+  }
+
+  int amountFor(int netProfit) =>
+      netProfit <= 0 ? 0 : (netProfit * rate + 5000) ~/ 10000;
+
+  factory ProfitShare.fromMap(Map<String, Object?> m) => ProfitShare(
+    name: m['name'] as String,
+    rate: m['rate'] as int,
+    createdAt: m['created_at'] as int,
+    updatedAt: m['updated_at'] as int,
+  );
+
+  Map<String, Object?> toMap() => {
+    'name': name,
+    'rate': rate,
+    'created_at': createdAt,
+    'updated_at': updatedAt,
+  };
+}
+
 class Report {
   const Report({
     this.accounts = 0,
@@ -199,7 +237,8 @@ class Report {
     this.spent = 0,
     this.sideCosts = 0,
     this.expectedSales = 0,
-    this.expectedProfit = 0,
+    this.grossProfit = 0,
+    this.profitShare,
     this.realizedProfit = 0,
     this.arrivedSales = 0,
     this.refund = 0,
@@ -208,18 +247,21 @@ class Report {
   final int spent,
       sideCosts,
       expectedSales,
-      expectedProfit,
+      grossProfit,
       realizedProfit,
       arrivedSales,
       refund;
   int get net => spent - refund;
-  int get grossProfit => expectedProfit + realizedProfit;
+  final ProfitShare? profitShare;
+  int get thirdPartyProfit => profitShare?.amountFor(grossProfit) ?? 0;
+  int get expectedProfit => grossProfit - thirdPartyProfit - realizedProfit;
   factory Report.fromOrders(
     Iterable<PurchaseOrder> items, {
     int accounts = 0,
     int products = 0,
     int receivedProfit = 0,
     int sideCosts = 0,
+    ProfitShare? profitShare,
   }) {
     var count = 0, pieces = 0, pending = 0, arrived = 0, cancelled = 0;
     var spent = 0, expectedSales = 0, expectedProfit = 0;
@@ -254,7 +296,8 @@ class Report {
       spent: spent + sideCosts,
       sideCosts: sideCosts,
       expectedSales: expectedSales,
-      expectedProfit: expectedProfit - receivedProfit - sideCosts,
+      grossProfit: expectedProfit - sideCosts,
+      profitShare: profitShare,
       realizedProfit: receivedProfit,
       arrivedSales: arrivedSales,
       refund: refund,
@@ -264,6 +307,7 @@ class Report {
     Map<String, Object?> m, {
     required int accounts,
     required int products,
+    ProfitShare? profitShare,
   }) {
     int n(String k) => (m[k] as num?)?.toInt() ?? 0;
     final sideCosts = n('side_costs');
@@ -278,7 +322,8 @@ class Report {
       spent: n('spent') + sideCosts,
       sideCosts: sideCosts,
       expectedSales: n('expected_sales'),
-      expectedProfit: n('expected_profit') - n('received_profit') - sideCosts,
+      grossProfit: n('expected_profit') - sideCosts,
+      profitShare: profitShare,
       realizedProfit: n('received_profit'),
       arrivedSales: n('arrived_sales'),
       refund: n('refund'),
@@ -346,6 +391,7 @@ class BackupData {
     required this.theme,
     this.receipts = const [],
     this.sideCosts = const [],
+    this.profitShare,
   });
   final List<Product> products;
   final List<Account> accounts;
@@ -353,9 +399,10 @@ class BackupData {
   final String theme;
   final List<ProfitReceipt> receipts;
   final List<SideCost> sideCosts;
+  final ProfitShare? profitShare;
   String encode() => const JsonEncoder.withIndent('  ').convert({
     'app': 'haseela',
-    'version': 4,
+    'version': 5,
     'exported_at': DateTime.now().toUtc().toIso8601String(),
     'money_unit': 'halala',
     'theme': theme,
@@ -364,13 +411,14 @@ class BackupData {
     'orders': orders.map((o) => o.toMap()).toList(),
     'receipts': receipts.map((r) => r.toMap()).toList(),
     'side_costs': sideCosts.map((r) => r.toMap()).toList(),
+    'profit_share': profitShare?.toMap(),
   });
   static BackupData decode(String text) {
     try {
       final root = jsonDecode(text);
       if (root is! Map<String, dynamic> ||
           root['app'] != 'haseela' ||
-          ![1, 2, 3, 4].contains(root['version']) ||
+          ![1, 2, 3, 4, 5].contains(root['version']) ||
           root['money_unit'] != 'halala' ||
           !['system', 'light', 'dark'].contains(root['theme'])) {
         throw const FormatException('ملف النسخة غير مدعوم');
@@ -411,6 +459,23 @@ class BackupData {
       final version = (root['version'] as num).toInt();
       final rr = version == 1 ? <Map<String, Object?>>[] : rows('receipts');
       final sr = version < 4 ? <Map<String, Object?>>[] : rows('side_costs');
+      ProfitShare? profitShare;
+      if (version >= 5) {
+        if (!root.containsKey('profit_share')) {
+          throw const FormatException('بيانات حصة الطرف الثالث ناقصة');
+        }
+        final saved = root['profit_share'];
+        if (saved != null) {
+          final row = Map<String, Object?>.from(saved as Map);
+          validBase({...row, 'id': 1});
+          name(row['name']);
+          final rate = row['rate'];
+          if (rate is! int || !ProfitShare.validRate(rate)) {
+            throw const FormatException('نسبة الطرف الثالث غير صالحة');
+          }
+          profitShare = ProfitShare.fromMap(row);
+        }
+      }
       final receiptIds = <int>{};
       var receivedTotal = 0;
       for (final r in rr) {
@@ -512,6 +577,7 @@ class BackupData {
         theme: root['theme'] as String,
         receipts: rr.map(ProfitReceipt.fromMap).toList(),
         sideCosts: sr.map(SideCost.fromMap).toList(),
+        profitShare: profitShare,
       );
     } on FormatException {
       rethrow;

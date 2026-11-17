@@ -182,6 +182,69 @@ void main() {
   );
 
   test(
+    'v7 upgrade and backups preserve named profit sharing without affecting expenses',
+    () async {
+      final orderId = await add(purchase: 10000, sale: 30000);
+      await db.saveSideCost(2000, 'شحن');
+      await db.saveReceipt(3000, 'ربح مستلم');
+      await db.db.execute('DROP TABLE profit_share');
+      await db.db.setVersion(7);
+      final path = db.db.path;
+      await db.close();
+      db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
+      expect(await db.db.getVersion(), 8);
+      expect((await db.report()).expectedProfit, 15000);
+      expect((await db.report()).profitShare, isNull);
+      final legacy = jsonDecode((await db.snapshot()).encode()) as Map;
+      legacy['version'] = 4;
+      legacy.remove('profit_share');
+
+      await db.saveProfitShare('  نور  ', 3500);
+      await expectLater(
+        db.saveProfitShare('مرفوض', 3501),
+        throwsFormatException,
+      );
+      await db.close();
+      db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
+      final report = await db.report();
+      expect(report.profitShare!.name, 'نور');
+      expect(report.thirdPartyProfit, 6300);
+      expect(report.expectedProfit, 8700);
+      expect(report.spent, 12000);
+      expect(report.realizedProfit, 3000);
+
+      final snapshot = BackupData.decode((await db.snapshot()).encode());
+      await db.changeStatus(orderId, OrderStatus.cancelled);
+      expect((await db.report()).thirdPartyProfit, 0);
+      expect((await db.report()).expectedProfit, -5000);
+      await db.restore(BackupData.decode(jsonEncode(legacy)));
+      expect((await db.report()).profitShare, isNull);
+      expect((await db.report()).expectedProfit, 15000);
+      await db.restore(snapshot);
+      expect(
+        (await db.report()).profitShare!.toMap(),
+        report.profitShare!.toMap(),
+      );
+      expect((await db.report()).expectedProfit, 8700);
+      final invalid = jsonDecode(snapshot.encode()) as Map;
+      invalid['profit_share']['rate'] = 3501;
+      expect(
+        () => BackupData.decode(jsonEncode(invalid)),
+        throwsFormatException,
+      );
+
+      await db.saveProfitShare('نور', 1200);
+      expect((await db.report()).thirdPartyProfit, 2160);
+      expect(
+        (await db.report()).profitShare!.createdAt,
+        report.profitShare!.createdAt,
+      );
+      await db.removeProfitShare();
+      expect((await db.report()).expectedProfit, 15000);
+    },
+  );
+
+  test(
     'v6 database gains side costs without changing existing totals',
     () async {
       await add();
@@ -320,7 +383,7 @@ void main() {
       );
       await old.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 7);
+      expect(await db.db.getVersion(), 8);
       expect((await db.product(1))!.lastPurchase, 8000);
       expect((await db.orders(1)).length, 2);
       expect((await db.report()).spent, 15500);

@@ -17,6 +17,34 @@ PurchaseOrder order(int id, int q, int buy, int sell, OrderStatus status) =>
     );
 
 void main() {
+  test('third-party percentages accept decimals up to and including 35%', () {
+    expect(ProfitShare.parseRate('٣٥٫٠٠'), 3500);
+    expect(ProfitShare.parseRate('۱۲٫۵'), 1250);
+    for (final input in ['', '0', '-1', '35.01', '12.345', 'NaN']) {
+      expect(ProfitShare.parseRate(input), isNull);
+    }
+  });
+
+  test('share rounds to a halala and never charges on a loss', () {
+    const share = ProfitShare(
+      name: 'نور',
+      rate: 1250,
+      createdAt: 1,
+      updatedAt: 1,
+    );
+    final report = Report.fromOrders(
+      [order(1, 1, 10000, 18004, OrderStatus.arrived)],
+      sideCosts: 1000,
+      receivedProfit: 2000,
+      profitShare: share,
+    );
+    expect(report.thirdPartyProfit, 876); // 12.5% of 7004 = 875.5
+    expect(report.expectedProfit, 4128);
+    expect(report.realizedProfit, 2000);
+    expect(share.amountFor(0), 0);
+    expect(share.amountFor(-1000), 0);
+  });
+
   test('acceptance totals distinguish arrived, pending and cancelled', () {
     final report = Report.fromOrders(
       [

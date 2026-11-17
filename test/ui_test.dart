@@ -845,6 +845,65 @@ void main() {
     await flush(tester);
   });
 
+  testWidgets(
+    'expected profit card lets you set, edit and remove a named share',
+    (tester) async {
+      await tester.runAsync(seed);
+      await launch(tester, size: const Size(320, 640), scale: 1.4);
+      await tester.tap(find.text('التقارير').hitTestable());
+      await flush(tester);
+
+      final card = find.byKey(const ValueKey('expected_profit_report_card'));
+      final name = find.byKey(const ValueKey('profit_share_name'));
+      final rate = find.byKey(const ValueKey('profit_share_rate'));
+      final save = find.byKey(const ValueKey('save_form'));
+      Future<void> tapVisible(Finder finder) async {
+        await tester.ensureVisible(finder);
+        await tester.pumpAndSettle();
+        await tester.tap(finder);
+      }
+
+      await tapVisible(find.text('تحديد حصة طرف ثالث'));
+      await flush(tester);
+      await tester.enterText(name, 'نور');
+      await tester.enterText(rate, '٣٥٫٠١');
+      await tapVisible(save);
+      await tester.pumpAndSettle();
+      expect(find.text('أدخلي نسبة أكبر من صفر وحتى 35٪'), findsOneWidget);
+
+      await tester.enterText(rate, '٣٥');
+      await tapVisible(save);
+      await flush(tester);
+      expect(store.report.expectedProfit, 48750);
+      final shown = find.text('حصة نور (35٪): 262.50 ريال · تعديل');
+      expect(shown, findsOneWidget);
+
+      await tapVisible(shown);
+      await flush(tester);
+      expect(find.text('نور'), findsOneWidget);
+      await tester.enterText(rate, '20');
+      await tapVisible(save);
+      await flush(tester);
+      expect(store.report.expectedProfit, 60000);
+      expect(
+        find.descendant(of: card, matching: find.textContaining('150 ريال')),
+        findsOneWidget,
+      );
+
+      await tapVisible(find.textContaining('150 ريال'));
+      await flush(tester);
+      await tapVisible(find.text('إزالة الحصة'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'إزالة'));
+      await flush(tester);
+      expect(store.report.expectedProfit, 75000);
+      expect(find.text('تحديد حصة طرف ثالث'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    },
+  );
+
   testWidgets('failed save preserves fields and shows actionable error', (
     tester,
   ) async {

@@ -85,6 +85,128 @@ Future<void> sideCostSheet(
   }
 }
 
+Future<void> profitShareSheet(BuildContext context, AppStore store) async {
+  final saved = await openSheet<bool>(context, _ProfitShareForm(store: store));
+  if (saved == true && context.mounted) {
+    notice(context, 'تم تحديث حصة الطرف الثالث والتقرير');
+  }
+}
+
+class _ProfitShareForm extends StatefulWidget {
+  const _ProfitShareForm({required this.store});
+  final AppStore store;
+
+  @override
+  State<_ProfitShareForm> createState() => _ProfitShareFormState();
+}
+
+class _ProfitShareFormState extends State<_ProfitShareForm> {
+  final form = GlobalKey<FormState>();
+  late final share = widget.store.report.profitShare;
+  late final name = TextEditingController(text: share?.name);
+  late final rate = TextEditingController(
+    text: share == null ? '' : moneyText(share!.rate),
+  );
+  bool saving = false;
+  String? error;
+
+  @override
+  void dispose() {
+    name.dispose();
+    rate.dispose();
+    super.dispose();
+  }
+
+  Future<void> _apply(Future<void> Function() action) async {
+    if (saving) return;
+    setState(() {
+      saving = true;
+      error = null;
+    });
+    try {
+      await widget.store.mutate(action);
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        saving = false;
+        error = friendlyError(e);
+      });
+    }
+  }
+
+  void save() {
+    if (!form.currentState!.validate()) return;
+    final value = ProfitShare.parseRate(rate.text)!;
+    _apply(
+      () => widget.store.database.saveProfitShare(name.text.trim(), value),
+    );
+  }
+
+  Future<void> remove() async {
+    if (await confirm(
+          context,
+          'إزالة حصة الطرف الثالث؟',
+          'سيتوقف خصم الحصة من الربح المتوقع المتبقي.',
+          button: 'إزالة',
+        ) &&
+        mounted) {
+      await _apply(widget.store.database.removeProfitShare);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SheetFrame(
+    title: 'حصة الطرف الثالث',
+    subtitle:
+        'تُحسب من الربح المتوقع بعد التكاليف الجانبية، وقبل طرح ما استلمتِه من أرباح.',
+    saving: saving,
+    save: save,
+    child: Form(
+      key: form,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          completeTextField(
+            key: const ValueKey('profit_share_name'),
+            controller: name,
+            enabled: !saving,
+            validator: nameValidator,
+            maxLength: 120,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              labelText: 'اسم الطرف الثالث',
+              counterText: '',
+            ),
+          ),
+          const SizedBox(height: 16),
+          completeTextField(
+            key: const ValueKey('profit_share_rate'),
+            controller: rate,
+            enabled: !saving,
+            validator: (value) => ProfitShare.parseRate(value ?? '') == null
+                ? 'أدخلي نسبة أكبر من صفر وحتى 35٪'
+                : null,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            textDirection: TextDirection.ltr,
+            inputFormatters: [numberInputFormatter],
+            decoration: const InputDecoration(
+              labelText: 'النسبة (٪)، حتى 35٪',
+              hintText: 'مثال: 20 أو 12.5',
+            ),
+          ),
+          if (share != null)
+            TextButton(
+              onPressed: saving ? null : remove,
+              child: const Text('إزالة الحصة'),
+            ),
+          if (error != null) FormErrorText(error!),
+        ],
+      ),
+    ),
+  );
+}
+
 class _AmountForm extends StatefulWidget {
   const _AmountForm({
     required this.fieldKey,
@@ -304,7 +426,7 @@ class SideCostsPage extends StatelessWidget {
           onEdit: () => sideCostSheet(context, store, cost: cost),
           deleteTitle: 'حذف التكلفة الجانبية؟',
           deleteDetail:
-              'سيُخصم ${moneyText(cost.amount)} ريال من المنفق ويُضاف إلى الربح المتوقع المتبقي.',
+              'سيُخصم ${moneyText(cost.amount)} ريال من المنفق، ويُعاد حساب الربح المتوقع المتبقي.',
           onDelete: () =>
               store.mutate(() => store.database.deleteSideCost(cost.id)),
         ),
