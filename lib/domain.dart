@@ -131,6 +131,60 @@ class Account {
   };
 }
 
+class OrderItem {
+  const OrderItem({
+    required this.productId,
+    required this.productName,
+    required this.quantity,
+    required this.purchase,
+    required this.sale,
+    this.purchaseTotal,
+  });
+  final int? productId, purchaseTotal;
+  final String productName;
+  final int quantity, purchase, sale;
+  int get cost => purchaseTotal ?? quantity * purchase;
+  int get revenue => quantity * sale;
+
+  void validate() {
+    if (productName.trim().isEmpty || productName.length > 120) {
+      throw const FormatException('اختاري اسم منتج من 1 إلى 120 حرفًا');
+    }
+    if (quantity < 1 || quantity > maxQuantity) {
+      throw const FormatException('الكمية غير صالحة');
+    }
+    if (purchase < 0 ||
+        sale < 0 ||
+        cost < 0 ||
+        purchase > maxMoney ||
+        sale > maxMoney ||
+        cost > maxMoney ||
+        revenue > maxMoney) {
+      throw const FormatException('إجمالي المبالغ أكبر من النطاق الآمن');
+    }
+    if (purchaseTotal != null && unitFromTotal(cost, quantity) != purchase) {
+      throw const FormatException('سعر الوحدة لا يطابق إجمالي الشراء');
+    }
+  }
+
+  factory OrderItem.fromMap(Map<String, Object?> m) => OrderItem(
+    productId: m['product_id'] as int?,
+    productName: m['product_name'] as String,
+    quantity: m['quantity'] as int,
+    purchase: m['purchase'] as int,
+    sale: m['sale'] as int,
+    purchaseTotal: m['purchase_total'] as int?,
+  );
+  Map<String, Object?> toMap() => {
+    'product_id': productId,
+    'product_name': productName.trim(),
+    'quantity': quantity,
+    'purchase': purchase,
+    'sale': sale,
+    'purchase_total': purchaseTotal,
+  };
+}
+
 class PurchaseOrder {
   const PurchaseOrder({
     required this.id,
@@ -145,6 +199,8 @@ class PurchaseOrder {
     required this.updatedAt,
     this.purchaseTotal,
     this.accountName,
+    this.saleTotal,
+    this.items = const [],
   });
   final int id, accountId;
   final int? productId;
@@ -152,12 +208,29 @@ class PurchaseOrder {
   final String? accountName;
   final int quantity, purchase, sale, createdAt, updatedAt;
   final int? purchaseTotal;
+  final int? saleTotal;
+  final List<OrderItem> items;
   final OrderStatus status;
   int get cost => purchaseTotal ?? quantity * purchase;
   bool get approximateUnit =>
       purchaseTotal != null && cost != quantity * purchase;
-  int get revenue => quantity * sale;
+  int get revenue => saleTotal ?? quantity * sale;
   int get profit => revenue - cost;
+  String get displayName => items.isEmpty
+      ? productName
+      : items.map((item) => item.productName).join(' + ');
+  List<OrderItem> get lines => items.isEmpty
+      ? [
+          OrderItem(
+            productId: productId,
+            productName: productName,
+            quantity: quantity,
+            purchase: purchase,
+            sale: sale,
+            purchaseTotal: purchaseTotal,
+          ),
+        ]
+      : items;
   factory PurchaseOrder.fromMap(Map<String, Object?> m) => PurchaseOrder(
     id: m['id'] as int,
     accountId: m['account_id'] as int,
@@ -171,6 +244,12 @@ class PurchaseOrder {
     updatedAt: m['updated_at'] as int,
     purchaseTotal: m['purchase_total'] as int?,
     accountName: m['account_name'] as String?,
+    saleTotal: m['sale_total'] as int?,
+    items: (m['items'] as List? ?? const [])
+        .map(
+          (item) => OrderItem.fromMap(Map<String, Object?>.from(item as Map)),
+        )
+        .toList(),
   );
   Map<String, Object?> toMap() => {
     'id': id,
@@ -184,6 +263,11 @@ class PurchaseOrder {
     'created_at': createdAt,
     'updated_at': updatedAt,
     'purchase_total': purchaseTotal,
+    'sale_total': saleTotal,
+  };
+  Map<String, Object?> toBackupMap() => {
+    ...toMap(),
+    'items': items.map((item) => item.toMap()).toList(),
   };
 }
 
@@ -402,13 +486,13 @@ class BackupData {
   final ProfitShare? profitShare;
   String encode() => const JsonEncoder.withIndent('  ').convert({
     'app': 'haseela',
-    'version': 5,
+    'version': 6,
     'exported_at': DateTime.now().toUtc().toIso8601String(),
     'money_unit': 'halala',
     'theme': theme,
     'products': products.map((p) => p.toMap()).toList(),
     'accounts': accounts.map((a) => a.toMap()).toList(),
-    'orders': orders.map((o) => o.toMap()).toList(),
+    'orders': orders.map((o) => o.toBackupMap()).toList(),
     'receipts': receipts.map((r) => r.toMap()).toList(),
     'side_costs': sideCosts.map((r) => r.toMap()).toList(),
     'profit_share': profitShare?.toMap(),
@@ -418,7 +502,7 @@ class BackupData {
       final root = jsonDecode(text);
       if (root is! Map<String, dynamic> ||
           root['app'] != 'haseela' ||
-          ![1, 2, 3, 4, 5].contains(root['version']) ||
+          ![1, 2, 3, 4, 5, 6].contains(root['version']) ||
           root['money_unit'] != 'halala' ||
           !['system', 'light', 'dark'].contains(root['theme'])) {
         throw const FormatException('ملف النسخة غير مدعوم');
@@ -542,6 +626,10 @@ class BackupData {
       var totalSales = 0;
       final orderIds = <int>{};
       for (final r in or) {
+        if (version < 6) {
+          r.remove('items');
+          r.remove('sale_total');
+        }
         validBase(r);
         name(r['product_name']);
         price(r['sale']);
@@ -563,9 +651,40 @@ class BackupData {
             throw const FormatException('سعر الوحدة لا يطابق إجمالي الشراء');
           }
         }
+        if (version >= 6) {
+          if (r['items'] is! List) {
+            throw const FormatException('تفاصيل منتجات الطلب ناقصة');
+          }
+          final order = PurchaseOrder.fromMap(r);
+          if (order.items.isEmpty) {
+            if (order.saleTotal != null) {
+              throw const FormatException('إجمالي بيع الطلب غير صالح');
+            }
+          } else {
+            var quantity = 0, cost = 0, revenue = 0;
+            for (final item in order.items) {
+              item.validate();
+              if (item.productId != null && !pids.contains(item.productId)) {
+                throw const FormatException('منتج الطلب غير موجود');
+              }
+              quantity += item.quantity;
+              cost += item.cost;
+              revenue += item.revenue;
+            }
+            if (order.items.length < 2 ||
+                quantity != order.quantity ||
+                cost != order.purchaseTotal ||
+                revenue != order.saleTotal ||
+                order.productId != null ||
+                order.productName != order.items.first.productName ||
+                unitFromTotal(revenue, quantity) != order.sale) {
+              throw const FormatException('إجماليات الطلب لا تطابق منتجاته');
+            }
+          }
+        }
         totalCost +=
             (r['purchase_total'] as int?) ?? q * (r['purchase'] as int);
-        totalSales += q * (r['sale'] as int);
+        totalSales += (r['sale_total'] as int?) ?? q * (r['sale'] as int);
         if (totalCost > maxMoney || totalSales > maxMoney) {
           throw const FormatException('الإجماليات أكبر من النطاق الآمن');
         }

@@ -67,6 +67,221 @@ void main() {
       expect((await db.product(product))!.lastPurchase, 12345);
     },
   );
+
+  List<OrderItem> mixedItems({int? secondProductId}) => [
+    OrderItem(
+      productId: product,
+      productName: 'منتج أول',
+      quantity: 3,
+      purchase: 3333,
+      purchaseTotal: 10000,
+      sale: 5000,
+    ),
+    OrderItem(
+      productId: secondProductId,
+      productName: 'منتج ثانٍ',
+      quantity: 2,
+      purchase: 725,
+      sale: 1101,
+    ),
+  ];
+
+  test(
+    'combined products retain exact costs, sales, counts and status',
+    () async {
+      final second = await db.saveProduct('ثانٍ', 1101);
+      final ids = await db.saveOrders(
+        accountId: account,
+        items: mixedItems(secondProductId: second),
+        status: OrderStatus.pending,
+      );
+      expect(ids, hasLength(1));
+      final order = (await db.orders(account)).single;
+      expect(order.items, hasLength(2));
+      expect(order.quantity, 5);
+      expect(order.cost, 11450);
+      expect(order.revenue, 17202);
+      expect(order.profit, 5752);
+      expect((await db.product(product))!.lastPurchase, 3333);
+      expect((await db.product(second))!.lastPurchase, 725);
+      await db.saveSideCost(505, 'شحن');
+      await db.saveReceipt(1000, 'مستلم');
+      await db.saveProfitShare('نور', 1250);
+      final report = await db.report();
+      final reference = Report.fromOrders(
+        [order],
+        sideCosts: 505,
+        receivedProfit: 1000,
+        profitShare: report.profitShare,
+      );
+      expect(report.orders, 1);
+      expect(report.pieces, 5);
+      expect(report.expectedSales, reference.expectedSales);
+      expect(report.expectedProfit, reference.expectedProfit);
+      expect(report.thirdPartyProfit, reference.thirdPartyProfit);
+      expect((await db.account(account))!.orderCount, 1);
+      expect((await db.account(account))!.pieces, 5);
+
+      await db.changeStatus(ids.single, OrderStatus.arrived);
+      expect((await db.report()).arrivedSales, 17202);
+      await db.changeStatus(ids.single, OrderStatus.cancelled);
+      expect((await db.report()).refund, 11450);
+      expect((await db.report()).expectedSales, 0);
+      expect((await db.cancelledOrders()).single.items, hasLength(2));
+      await db.changeStatus(ids.single, OrderStatus.pending);
+      expect((await db.report()).expectedProfit, report.expectedProfit);
+
+      await db.deleteProduct(second);
+      final retained = (await db.orders(account)).single;
+      expect(retained.items.last.productId, isNull);
+      expect(retained.items.last.productName, 'منتج ثانٍ');
+      expect(retained.revenue, 17202);
+      await db.deleteAccount(account);
+      expect(await db.db.query('order_items'), isEmpty);
+    },
+  );
+
+  test('separate products save together and reverse independently', () async {
+    final ids = await db.saveOrders(
+      accountId: account,
+      items: mixedItems(),
+      status: OrderStatus.pending,
+      separate: true,
+    );
+    expect(ids, hasLength(2));
+    expect((await db.report()).orders, 2);
+    expect((await db.report()).pieces, 5);
+    expect((await db.report()).expectedSales, 17202);
+    expect((await db.report()).spent, 11450);
+    expect((await db.orders(account)).every((o) => o.items.isEmpty), isTrue);
+    await db.changeStatus(ids.first, OrderStatus.cancelled);
+    expect((await db.report()).refund, 10000);
+    expect((await db.report()).expectedSales, 2202);
+    await db.deleteOrder(ids.last);
+    expect((await db.report()).orders, 1);
+  });
+
+  test('failed batches roll back every product and purchase memory', () async {
+    for (final separate in [false, true]) {
+      await expectLater(
+        db.saveOrders(
+          accountId: account,
+          items: mixedItems(secondProductId: 999999),
+          status: OrderStatus.pending,
+          separate: separate,
+        ),
+        throwsA(anything),
+      );
+      expect(await db.orders(account), isEmpty);
+      expect(await db.db.query('order_items'), isEmpty);
+      expect((await db.product(product))!.lastPurchase, isNull);
+    }
+    await db.saveSideCost(maxMoney - 11449, 'حد المبالغ');
+    await expectLater(
+      db.saveOrders(
+        accountId: account,
+        items: mixedItems(),
+        status: OrderStatus.pending,
+        separate: true,
+      ),
+      throwsFormatException,
+    );
+    expect(await db.orders(account), isEmpty);
+    await db.toggleAccountClosed(account, true);
+    await db.deleteSideCost((await db.sideCosts()).single.id);
+    await expectLater(
+      db.saveOrders(
+        accountId: account,
+        items: mixedItems(),
+        status: OrderStatus.pending,
+      ),
+      throwsStateError,
+    );
+  });
+
+  test(
+    'combined orders survive restart, backup and edits down to one product',
+    () async {
+      await db.saveOrders(
+        accountId: account,
+        items: mixedItems(),
+        status: OrderStatus.pending,
+      );
+      final original = (await db.orders(account)).single;
+      final snapshot = await db.snapshot();
+      final path = db.db.path;
+      await db.close();
+      db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
+      expect(
+        (await db.orders(account)).single.toBackupMap(),
+        original.toBackupMap(),
+      );
+      for (final field in ['quantity', 'sale', 'product_id']) {
+        final invalid = jsonDecode(snapshot.encode()) as Map;
+        invalid['orders'][0]['items'][0][field] = 999999;
+        expect(
+          () => BackupData.decode(jsonEncode(invalid)),
+          throwsFormatException,
+        );
+      }
+      await db.restore(BackupData.decode(snapshot.encode()));
+      expect(
+        (await db.orders(account)).single.toBackupMap(),
+        original.toBackupMap(),
+      );
+      await db.saveOrders(
+        accountId: account,
+        items: [mixedItems().last],
+        status: OrderStatus.arrived,
+        old: original,
+      );
+      final edited = (await db.orders(account)).single;
+      expect(edited.id, original.id);
+      expect(edited.createdAt, original.createdAt);
+      expect(edited.items, isEmpty);
+      expect(edited.saleTotal, isNull);
+      expect(edited.revenue, 2202);
+      expect((await db.report()).spent, 1450);
+      expect(await db.db.query('order_items'), isEmpty);
+      await expectLater(
+        db.saveOrders(
+          accountId: account,
+          items: mixedItems(),
+          status: OrderStatus.pending,
+          old: original,
+          separate: true,
+        ),
+        throwsFormatException,
+      );
+    },
+  );
+
+  test(
+    'v8 migration and legacy v5 backups retain single product orders',
+    () async {
+      await add(quantity: 3, purchase: 3333, total: 10000, sale: 5000);
+      final legacy = jsonDecode((await db.snapshot()).encode()) as Map;
+      legacy['version'] = 5;
+      (legacy['orders'][0] as Map).remove('items');
+      (legacy['orders'][0] as Map).remove('sale_total');
+      await db.db.execute('DROP TABLE order_items');
+      await db.db.execute('ALTER TABLE orders DROP COLUMN sale_total');
+      await db.db.setVersion(8);
+      final path = db.db.path;
+      await db.close();
+      db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
+      expect(await db.db.getVersion(), 9);
+      expect((await db.report()).spent, 10000);
+      expect((await db.report()).expectedSales, 15000);
+      expect((await db.orders(account)).single.items, isEmpty);
+      await db.restore(BackupData.decode(jsonEncode(legacy)));
+      expect((await db.report()).expectedProfit, 5000);
+      expect(
+        (await db.orders(account)).single.lines.single.purchaseTotal,
+        10000,
+      );
+    },
+  );
   test(
     'total divided among three units preserves every halala in costs, profits and refunds',
     () async {
@@ -192,7 +407,7 @@ void main() {
       final path = db.db.path;
       await db.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 8);
+      expect(await db.db.getVersion(), 9);
       expect((await db.report()).expectedProfit, 15000);
       expect((await db.report()).profitShare, isNull);
       final legacy = jsonDecode((await db.snapshot()).encode()) as Map;
@@ -383,7 +598,7 @@ void main() {
       );
       await old.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 8);
+      expect(await db.db.getVersion(), 9);
       expect((await db.product(1))!.lastPurchase, 8000);
       expect((await db.orders(1)).length, 2);
       expect((await db.report()).spent, 15500);

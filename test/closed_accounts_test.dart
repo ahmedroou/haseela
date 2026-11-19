@@ -210,7 +210,7 @@ void main() {
       final path = db.db.path;
       await db.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 8);
+      expect(await db.db.getVersion(), 9);
       expect((await db.account(a))!.closedAt, 2000);
       expect((await db.account(a))!.updatedAt, 2000);
       expect((await db.account(b))!.closedAt, isNull);
@@ -240,7 +240,7 @@ void main() {
       await db.saveAccount('مفتوح');
       final snapshot = await db.snapshot();
       final root = jsonDecode(snapshot.encode()) as Map<String, dynamic>;
-      expect(root['version'], 5);
+      expect(root['version'], 6);
       await db.restore(BackupData.decode(snapshot.encode()));
       expect((await db.account(a))!.closedAt, 2000);
       expect(await db.latestSafetyCopy(), isNotNull);

@@ -18,28 +18,31 @@ class OrderForm extends StatefulWidget {
   State<OrderForm> createState() => _OrderFormState();
 }
 
-class _OrderFormState extends State<OrderForm> {
-  final key = GlobalKey<FormState>();
-  late final quantity = TextEditingController(
-    text: widget.order?.quantity.toString() ?? '1',
-  );
-  late bool totalMode = widget.order?.purchaseTotal != null;
-  late final purchase = TextEditingController(
-    text: widget.order == null
+class _OrderDraft {
+  _OrderDraft(OrderItem? item, VoidCallback changed) {
+    quantity.text = item?.quantity.toString() ?? '1';
+    totalMode = item?.purchaseTotal != null;
+    purchase.text = item == null
         ? ''
-        : moneyInput(totalMode ? widget.order!.cost : widget.order!.purchase),
-  );
-  late final sale = TextEditingController(
-    text: widget.order == null ? '' : moneyInput(widget.order!.sale),
-  );
-  late final snapshotName = TextEditingController(
-    text: widget.order?.productName ?? '',
-  );
-  late int? productId = widget.order?.productId;
-  late OrderStatus status = widget.order?.status ?? OrderStatus.pending;
+        : moneyInput(totalMode ? item.cost : item.purchase);
+    sale.text = item == null ? '' : moneyInput(item.sale);
+    snapshotName.text = item?.productName ?? '';
+    productId = item?.productId;
+    quantity.addListener(changed);
+    sale.addListener(changed);
+    snapshotName.addListener(changed);
+    purchase.addListener(() {
+      if (!converting) preservedTotal = null;
+      changed();
+    });
+  }
+  final quantity = TextEditingController();
+  final purchase = TextEditingController();
+  final sale = TextEditingController();
+  final snapshotName = TextEditingController();
+  int? productId;
+  bool totalMode = false, converting = false;
   int? preservedTotal, preservedQuantity, lastPurchase;
-  bool saving = false, converting = false;
-  String? error;
   int get count => parseQuantity(quantity.text) ?? 0;
   int get entered => parseMoney(purchase.text) ?? 0;
   int get cost => totalMode
@@ -49,54 +52,126 @@ class _OrderFormState extends State<OrderForm> {
       : entered * count;
   int get unit =>
       totalMode && count > 0 ? unitFromTotal(entered, count) : entered;
+  int get revenue => (parseMoney(sale.text) ?? 0) * count;
+  bool get valid =>
+      snapshotName.text.trim().isNotEmpty &&
+      snapshotName.text.length <= 120 &&
+      parseQuantity(quantity.text) != null &&
+      parseMoney(purchase.text) != null &&
+      parseMoney(sale.text) != null;
+  OrderItem toItem() => OrderItem(
+    productId: productId,
+    productName: snapshotName.text,
+    quantity: count,
+    purchase: unit,
+    purchaseTotal:
+        totalMode || preservedTotal != null && preservedQuantity == count
+        ? cost
+        : null,
+    sale: parseMoney(sale.text)!,
+  );
+
+  void dispose() {
+    for (final c in [quantity, purchase, sale, snapshotName]) {
+      c.dispose();
+    }
+  }
+
+  void switchMode(bool value) {
+    if (totalMode == value) return;
+    final previousCost = cost;
+    final valid = parseMoney(purchase.text) != null && count > 0;
+    converting = true;
+    totalMode = value;
+    if (valid) {
+      purchase.text = moneyInput(
+        value ? previousCost : unitFromTotal(previousCost, count),
+      );
+      preservedTotal =
+          value || unitFromTotal(previousCost, count) * count == previousCost
+          ? null
+          : previousCost;
+      preservedQuantity = count;
+    }
+    converting = false;
+  }
+}
+
+class _OrderFormState extends State<OrderForm> {
+  final key = GlobalKey<FormState>();
+  final fieldsScroll = ScrollController();
+  final drafts = <_OrderDraft>[];
+  final removedDrafts = <_OrderDraft>[];
+  int selectedIndex = 0;
+  late OrderStatus status = widget.order?.status ?? OrderStatus.pending;
+  bool separate = false, saving = false;
+  String? error;
+  _OrderDraft get draft => drafts[selectedIndex];
+  TextEditingController get quantity => draft.quantity;
+  TextEditingController get purchase => draft.purchase;
+  TextEditingController get sale => draft.sale;
+  TextEditingController get snapshotName => draft.snapshotName;
+  bool get totalMode => draft.totalMode;
+  int get count => draft.count;
+  int get unit => draft.unit;
+  int get cost => draft.cost;
+  int? get lastPurchase => draft.lastPurchase;
 
   @override
   void initState() {
     super.initState();
-    quantity.addListener(recalculate);
-    sale.addListener(recalculate);
-    purchase.addListener(purchaseChanged);
+    final items = widget.order?.lines;
+    if (items == null) {
+      drafts.add(_OrderDraft(null, recalculate));
+    } else {
+      drafts.addAll(items.map((item) => _OrderDraft(item, recalculate)));
+    }
   }
 
   void recalculate() {
     if (mounted) setState(() {});
   }
 
-  void purchaseChanged() {
-    if (!converting) preservedTotal = null;
-    recalculate();
-  }
-
   @override
   void dispose() {
-    for (final c in [quantity, purchase, sale, snapshotName]) {
-      c.dispose();
+    for (final draft in [...drafts, ...removedDrafts]) {
+      draft.dispose();
     }
+    fieldsScroll.dispose();
     super.dispose();
   }
 
-  void switchMode(bool value) {
-    if (totalMode == value || saving) return;
-    final previousCost = cost;
-    final valid = parseMoney(purchase.text) != null && count > 0;
-    converting = true;
+  void selectDraft(int index) {
+    FocusScope.of(context).unfocus();
     setState(() {
-      totalMode = value;
-      if (valid) {
-        purchase.text = moneyInput(
-          value ? previousCost : unitFromTotal(previousCost, count),
-        );
-        preservedTotal =
-            value || unitFromTotal(previousCost, count) * count == previousCost
-            ? null
-            : previousCost;
-        preservedQuantity = count;
-      }
+      selectedIndex = index;
+      error = null;
     });
-    converting = false;
+    showProductFields();
   }
 
-  Future<void> selectProduct() async {
+  void showProductFields() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && fieldsScroll.hasClients) fieldsScroll.jumpTo(0);
+    });
+  }
+
+  void removeDraft() {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      removedDrafts.add(drafts.removeAt(selectedIndex));
+      selectedIndex = selectedIndex.clamp(0, drafts.length - 1);
+      error = null;
+    });
+    showProductFields();
+  }
+
+  void switchMode(bool value) {
+    if (saving) return;
+    setState(() => draft.switchMode(value));
+  }
+
+  Future<void> selectProduct({bool add = false}) async {
     final selected = await openSheet<Product>(
       context,
       ProductPicker(store: widget.store),
@@ -112,12 +187,17 @@ class _OrderFormState extends State<OrderForm> {
     }
     if (!mounted || product == null) return;
     final p = product;
+    FocusScope.of(context).unfocus();
     setState(() {
-      productId = p.id;
+      if (add) {
+        drafts.add(_OrderDraft(null, recalculate));
+        selectedIndex = drafts.length - 1;
+      }
+      draft.productId = p.id;
       snapshotName.text = p.name;
       sale.text = moneyInput(p.sale);
-      lastPurchase = p.lastPurchase;
-      preservedTotal = null;
+      draft.lastPurchase = p.lastPurchase;
+      draft.preservedTotal = null;
       purchase.text = p.lastPurchase == null
           ? ''
           : moneyInput(
@@ -126,12 +206,22 @@ class _OrderFormState extends State<OrderForm> {
                   : p.lastPurchase!,
             );
     });
+    showProductFields();
   }
 
   Future<void> save() async {
-    if (saving || !key.currentState!.validate()) return;
-    if (snapshotName.text.trim().isEmpty) {
-      setState(() => error = 'اختاري المنتج أولًا');
+    if (saving) return;
+    final invalid = drafts.indexWhere((draft) => !draft.valid);
+    if (invalid != -1) {
+      selectDraft(invalid);
+      setState(
+        () => error = snapshotName.text.trim().isEmpty
+            ? 'اختاري المنتج أولًا'
+            : 'راجعي كمية وأسعار «${snapshotName.text}»',
+      );
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) key.currentState?.validate();
+      });
       return;
     }
     setState(() {
@@ -140,17 +230,10 @@ class _OrderFormState extends State<OrderForm> {
     });
     try {
       await widget.store.mutate(
-        () => widget.store.database.saveOrder(
+        () => widget.store.database.saveOrders(
           accountId: widget.accountId,
-          productId: productId,
-          productName: snapshotName.text,
-          quantity: count,
-          purchase: unit,
-          purchaseTotal:
-              totalMode || preservedTotal != null && preservedQuantity == count
-              ? cost
-              : null,
-          sale: parseMoney(sale.text)!,
+          items: drafts.map((draft) => draft.toItem()).toList(),
+          separate: separate && widget.order == null,
           status: status,
           old: widget.order,
         ),
@@ -168,21 +251,91 @@ class _OrderFormState extends State<OrderForm> {
 
   @override
   Widget build(BuildContext context) {
-    final revenue = (parseMoney(sale.text) ?? 0) * count;
-    final profit = status == OrderStatus.cancelled ? 0 : revenue - cost;
+    final revenue = drafts.fold(0, (sum, draft) => sum + draft.revenue);
+    final totalCost = drafts.fold(0, (sum, draft) => sum + draft.cost);
+    final profit = status == OrderStatus.cancelled ? 0 : revenue - totalCost;
     final approximate = count > 0 && cost != unit * count;
+    final multiple = drafts.length > 1;
     return _CompactFrame(
       title: widget.order == null ? 'طلب جديد' : 'تعديل الطلب',
       saving: saving,
       save: save,
+      scrollController: fieldsScroll,
+      saveLabel: multiple && separate
+          ? 'حفظ الطلبات (${drafts.length})'
+          : 'حفظ الطلب',
       child: Form(
         key: key,
         child: Column(
+          key: ObjectKey(draft),
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (multiple) ...[
+              if (widget.order == null) ...[
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    ChoiceChip(
+                      key: const ValueKey('orders_together'),
+                      label: const Text('طلب واحد'),
+                      selected: !separate,
+                      onSelected: saving
+                          ? null
+                          : (_) => setState(() => separate = false),
+                    ),
+                    ChoiceChip(
+                      key: const ValueKey('orders_separate'),
+                      label: const Text('طلبات منفصلة'),
+                      selected: separate,
+                      onSelected: saving
+                          ? null
+                          : (_) => setState(() => separate = true),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+              ],
+              Text(
+                separate
+                    ? 'كل منتج يُحفظ كطلب مستقل داخل هذا الحساب.'
+                    : 'تُحفظ المنتجات في طلب واحد بحالة مشتركة.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  for (var index = 0; index < drafts.length; index++)
+                    InputChip(
+                      key: ValueKey('order_item_$index'),
+                      label: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 210),
+                        child: Text(
+                          drafts[index].snapshotName.text.isEmpty
+                              ? 'اختيار المنتج'
+                              : drafts[index].snapshotName.text,
+                        ),
+                      ),
+                      selected: selectedIndex == index,
+                      onPressed: saving ? null : () => selectDraft(index),
+                      onDeleted: saving
+                          ? null
+                          : () {
+                              selectedIndex = index;
+                              removeDraft();
+                            },
+                      deleteButtonTooltipMessage: 'إزالة المنتج من النموذج',
+                    ),
+                ],
+              ),
+              const SizedBox(height: 10),
+            ],
             Pressable(
               key: const ValueKey('order_product_picker'),
-              onTap: saving ? null : selectProduct,
+              onTap: saving ? null : () => selectProduct(),
               child: SurfaceCard(
                 color: softTint(context, lilac, .07),
                 padding: const EdgeInsets.symmetric(
@@ -319,6 +472,11 @@ class _OrderFormState extends State<OrderForm> {
               ),
             ),
             const SizedBox(height: 7),
+            if (multiple)
+              Text(
+                'حالة جميع المنتجات عند الحفظ',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             Wrap(
               spacing: 6,
               runSpacing: 4,
@@ -365,17 +523,17 @@ class _OrderFormState extends State<OrderForm> {
                   spacing: 6,
                   runSpacing: 6,
                   children: [
-                    _summary('إجمالي الشراء', cost, width, lilac),
+                    _summary('إجمالي الشراء', totalCost, width, lilac),
                     _summary(
                       status == OrderStatus.cancelled
                           ? 'الاسترداد'
                           : 'إجمالي البيع',
-                      status == OrderStatus.cancelled ? cost : revenue,
+                      status == OrderStatus.cancelled ? totalCost : revenue,
                       width,
                       peach,
                     ),
                     _summary(
-                      'ربح الطلب',
+                      separate && multiple ? 'إجمالي الربح' : 'ربح الطلب',
                       profit,
                       width,
                       profit < 0 ? rose : sage,
@@ -383,6 +541,12 @@ class _OrderFormState extends State<OrderForm> {
                   ],
                 );
               },
+            ),
+            TextButton.icon(
+              key: const ValueKey('order_add_product'),
+              onPressed: saving ? null : () => selectProduct(add: true),
+              icon: const Icon(Icons.add_rounded, size: 19),
+              label: const Text('إضافة منتج آخر'),
             ),
             if (error != null) FormErrorText(error!),
           ],
@@ -443,8 +607,11 @@ class _CompactFrame extends StatelessWidget {
     required this.child,
     required this.saving,
     required this.save,
+    required this.saveLabel,
+    required this.scrollController,
   });
-  final String title;
+  final String title, saveLabel;
+  final ScrollController scrollController;
   final Widget child;
   final bool saving;
   final VoidCallback save;
@@ -493,6 +660,7 @@ class _CompactFrame extends StatelessWidget {
                   Flexible(
                     child: SingleChildScrollView(
                       key: const ValueKey('order_fields_scroll'),
+                      controller: scrollController,
                       child: child,
                     ),
                   ),
@@ -513,7 +681,7 @@ class _CompactFrame extends StatelessWidget {
                             height: 20,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Text('حفظ الطلب'),
+                        : Text(saveLabel),
                   ),
                 ],
               ),

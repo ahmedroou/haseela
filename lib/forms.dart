@@ -590,7 +590,7 @@ Future<void> orderSheet(
     OrderForm(store: store, accountId: accountId, order: order),
   );
   if (saved == true && context.mounted) {
-    notice(context, order == null ? 'تمت إضافة الطلب ✨' : 'تم حفظ الطلب');
+    notice(context, 'تم الحفظ وتحديث التقرير ✨');
   }
 }
 

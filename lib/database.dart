@@ -17,7 +17,7 @@ class AppDatabase {
     final db = await f.openDatabase(
       location,
       options: OpenDatabaseOptions(
-        version: 8,
+        version: 9,
         onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: (db, version) async {
           await db.execute('''CREATE TABLE products (
@@ -38,6 +38,7 @@ class AppDatabase {
           purchase INTEGER NOT NULL CHECK(purchase >= 0),
           purchase_total INTEGER CHECK(purchase_total IS NULL OR purchase_total >= 0),
           sale INTEGER NOT NULL CHECK(sale >= 0),
+          sale_total INTEGER CHECK(sale_total IS NULL OR sale_total >= 0),
           status TEXT NOT NULL CHECK(status IN ('pending','arrived','cancelled')),
           created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)''');
           await db.execute(
@@ -45,6 +46,7 @@ class AppDatabase {
           );
           await db.execute('CREATE INDEX order_status ON orders(status)');
           await db.execute('CREATE INDEX order_product ON orders(product_id)');
+          await _createOrderItems(db);
           await db.execute(
             'CREATE INDEX account_date ON accounts(created_at DESC, id DESC)',
           );
@@ -114,12 +116,36 @@ class AppDatabase {
           }
           if (oldVersion < 7) await _createSideCosts(db);
           if (oldVersion < 8) await _createProfitShare(db);
+          if (oldVersion < 9) {
+            final columns = await db.rawQuery('PRAGMA table_info(orders)');
+            if (!columns.any((row) => row['name'] == 'sale_total')) {
+              await db.execute(
+                'ALTER TABLE orders ADD COLUMN sale_total INTEGER CHECK(sale_total IS NULL OR sale_total >= 0)',
+              );
+            }
+            await _createOrderItems(db);
+          }
         },
         onDowngrade: (db, oldVersion, newVersion) async =>
             throw StateError('قاعدة البيانات من إصدار أحدث؛ حدّثي التطبيق'),
       ),
     );
     return AppDatabase._(db);
+  }
+
+  static Future<void> _createOrderItems(DatabaseExecutor db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS order_items (
+      order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+      product_name TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity > 0),
+      purchase INTEGER NOT NULL CHECK(purchase >= 0),
+      sale INTEGER NOT NULL CHECK(sale >= 0),
+      purchase_total INTEGER CHECK(purchase_total IS NULL OR purchase_total >= 0),
+      PRIMARY KEY(order_id, position))''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS order_item_product ON order_items(product_id)',
+    );
   }
 
   static Future<void> _seedProducts(DatabaseExecutor db) async {
@@ -270,76 +296,132 @@ class AppDatabase {
     required OrderStatus status,
     int? purchaseTotal,
     PurchaseOrder? old,
+  }) async => (await saveOrders(
+    accountId: accountId,
+    items: [
+      OrderItem(
+        productId: productId,
+        productName: productName,
+        quantity: quantity,
+        purchase: purchase,
+        sale: sale,
+        purchaseTotal: purchaseTotal,
+      ),
+    ],
+    status: status,
+    old: old,
+  )).single;
+
+  Future<List<int>> saveOrders({
+    required int accountId,
+    required List<OrderItem> items,
+    required OrderStatus status,
+    bool separate = false,
+    PurchaseOrder? old,
   }) async {
-    _name(productName);
-    _price(purchase);
-    _price(sale);
-    if (quantity < 1 || quantity > maxQuantity) {
-      throw const FormatException('الكمية غير صالحة');
+    final lines = List<OrderItem>.of(items);
+    if (lines.isEmpty) {
+      throw const FormatException('أضيفي منتجًا واحدًا على الأقل');
     }
-    if (purchaseTotal != null) {
-      _price(purchaseTotal);
-      if (unitFromTotal(purchaseTotal, quantity) != purchase) {
-        throw const FormatException('سعر الوحدة لا يطابق إجمالي الشراء');
-      }
+    if (old != null && separate) {
+      throw const FormatException('احفظي تعديل المنتجات ضمن الطلب نفسه');
     }
-    final cost = purchaseTotal ?? quantity * purchase;
+    var cost = 0, revenue = 0, quantity = 0;
+    for (final item in lines) {
+      item.validate();
+      cost += item.cost;
+      revenue += item.revenue;
+      quantity += item.quantity;
+    }
+    if (!separate && quantity > maxQuantity) {
+      throw const FormatException('إجمالي كمية الطلب أكبر من النطاق المسموح');
+    }
     return db.transaction((tx) async {
       final sums = (await tx.rawQuery(
         '''SELECT COALESCE(SUM(COALESCE(purchase_total, quantity * purchase)),0)
           + (SELECT COALESCE(SUM(amount),0) FROM side_costs) cost,
-        COALESCE(SUM(quantity * sale),0) revenue FROM orders WHERE id != ?''',
+        COALESCE(SUM(COALESCE(sale_total, quantity * sale)),0) revenue FROM orders WHERE id != ?''',
         [old?.id ?? -1],
       )).single;
       if ((sums['cost'] as int) + cost > maxMoney ||
-          (sums['revenue'] as int) + quantity * sale > maxMoney) {
+          (sums['revenue'] as int) + revenue > maxMoney) {
         throw const FormatException('إجمالي المبالغ أكبر من النطاق الآمن');
       }
       final now = DateTime.now().millisecondsSinceEpoch;
-      final values = {
-        'account_id': accountId,
-        'product_id': productId,
-        'product_name': productName.trim(),
-        'quantity': quantity,
-        'purchase': purchase,
-        'purchase_total': purchaseTotal,
-        'sale': sale,
-        'status': status.name,
-        'created_at': old?.createdAt ?? now,
-        'updated_at': now,
-      };
-      final int id;
-      if (old == null) {
-        final acc = await tx.query(
-          'accounts',
-          columns: ['is_closed'],
-          where: 'id = ?',
-          whereArgs: [accountId],
-        );
-        if (acc.isNotEmpty && (acc.first['is_closed'] as int? ?? 0) == 1) {
-          throw StateError('الحساب مغلق؛ لا يمكن إضافة طلبات جديدة إليه');
-        }
-        id = await tx.insert('orders', values);
-      } else {
-        final changed = await tx.update(
-          'orders',
-          values,
-          where: 'id = ?',
-          whereArgs: [old.id],
-        );
-        if (changed == 0) throw StateError('الطلب لم يعد موجودًا');
-        id = old.id;
+      final account = await _accountRow(tx, accountId);
+      if (old == null && account.isClosed) {
+        throw StateError('الحساب مغلق؛ لا يمكن إضافة طلبات جديدة إليه');
       }
-      if (productId != null) {
+      final groups = separate ? lines.map((item) => [item]) : [lines];
+      final ids = <int>[];
+      for (final group in groups) {
+        ids.add(await _saveOrder(tx, accountId, group, status, now, old));
+      }
+      for (final item in lines) {
+        if (item.productId == null) continue;
         await tx.update(
           'products',
-          {'last_purchase': purchase, 'updated_at': now},
+          {'last_purchase': item.purchase, 'updated_at': now},
           where: 'id = ?',
-          whereArgs: [productId],
+          whereArgs: [item.productId],
         );
       }
-      return id;
+      return ids;
     });
+  }
+
+  Future<int> _saveOrder(
+    Transaction tx,
+    int accountId,
+    List<OrderItem> items,
+    OrderStatus status,
+    int now,
+    PurchaseOrder? old,
+  ) async {
+    final multiple = items.length > 1;
+    final quantity = items.fold(0, (sum, item) => sum + item.quantity);
+    final cost = items.fold(0, (sum, item) => sum + item.cost);
+    final revenue = items.fold(0, (sum, item) => sum + item.revenue);
+    final values = {
+      ...items.first.toMap(),
+      'account_id': accountId,
+      'product_id': multiple ? null : items.first.productId,
+      'quantity': quantity,
+      'purchase': multiple
+          ? unitFromTotal(cost, quantity)
+          : items.first.purchase,
+      'purchase_total': multiple ? cost : items.first.purchaseTotal,
+      'sale': multiple ? unitFromTotal(revenue, quantity) : items.first.sale,
+      'sale_total': multiple ? revenue : null,
+      'status': status.name,
+      'updated_at': now,
+    };
+    final int id;
+    if (old == null) {
+      id = await tx.insert('orders', {...values, 'created_at': now});
+    } else {
+      final changed = await tx.update(
+        'orders',
+        values,
+        where: 'id = ?',
+        whereArgs: [old.id],
+      );
+      if (changed == 0) throw StateError('الطلب لم يعد موجودًا');
+      id = old.id;
+      await tx.delete('order_items', where: 'order_id = ?', whereArgs: [id]);
+    }
+    if (multiple) {
+      final batch = tx.batch();
+      for (var position = 0; position < items.length; position++) {
+        batch.insert('order_items', {
+          'order_id': id,
+          'position': position,
+          ...items[position].toMap(),
+        });
+      }
+      await batch.commit(noResult: true);
+    }
+    return id;
   }
 
   Future<void> changeStatus(int id, OrderStatus status) async {
@@ -430,14 +512,47 @@ class AppDatabase {
     int accountId, {
     int offset = 0,
     int limit = 40,
-  }) async => (await db.query(
-    'orders',
-    where: 'account_id = ?',
-    whereArgs: [accountId],
-    orderBy: 'created_at DESC, id DESC',
-    limit: limit,
-    offset: offset,
-  )).map(PurchaseOrder.fromMap).toList();
+  }) => db.transaction(
+    (tx) async => _ordersWithItems(
+      tx,
+      await tx.query(
+        'orders',
+        where: 'account_id = ?',
+        whereArgs: [accountId],
+        orderBy: 'created_at DESC, id DESC',
+        limit: limit,
+        offset: offset,
+      ),
+    ),
+  );
+
+  static Future<List<PurchaseOrder>> _ordersWithItems(
+    DatabaseExecutor tx,
+    List<Map<String, Object?>> rows,
+  ) async {
+    final items = <int, List<Map<String, Object?>>>{};
+    // Keep parameter counts below SQLite's limit, including full backup exports.
+    for (var start = 0; start < rows.length; start += 400) {
+      final ids = rows.skip(start).take(400).map((row) => row['id']).toList();
+      final details = await tx.query(
+        'order_items',
+        where: 'order_id IN (${List.filled(ids.length, '?').join(',')})',
+        whereArgs: ids,
+        orderBy: 'order_id, position',
+      );
+      for (final item in details) {
+        items.putIfAbsent(item['order_id'] as int, () => []).add(item);
+      }
+    }
+    return rows
+        .map(
+          (row) => PurchaseOrder.fromMap({
+            ...row,
+            'items': items[row['id']] ?? const [],
+          }),
+        )
+        .toList();
+  }
 
   Future<Report> report() => db.transaction((tx) async {
     final counts = (await tx.rawQuery('''SELECT
@@ -449,11 +564,11 @@ class AppDatabase {
       SUM(CASE WHEN status='arrived' THEN 1 ELSE 0 END) arrived,
       SUM(CASE WHEN status='cancelled' THEN 1 ELSE 0 END) cancelled,
       SUM(COALESCE(purchase_total,quantity * purchase)) spent,
-      SUM(CASE WHEN status!='cancelled' THEN quantity * sale ELSE 0 END) expected_sales,
-      SUM(CASE WHEN status!='cancelled' THEN quantity * sale-COALESCE(purchase_total,quantity * purchase) ELSE 0 END) expected_profit,
+      SUM(CASE WHEN status!='cancelled' THEN COALESCE(sale_total,quantity * sale) ELSE 0 END) expected_sales,
+      SUM(CASE WHEN status!='cancelled' THEN COALESCE(sale_total,quantity * sale)-COALESCE(purchase_total,quantity * purchase) ELSE 0 END) expected_profit,
       (SELECT COALESCE(SUM(amount),0) FROM profit_receipts) received_profit,
       (SELECT COALESCE(SUM(amount),0) FROM side_costs) side_costs,
-      SUM(CASE WHEN status='arrived' THEN quantity * sale ELSE 0 END) arrived_sales,
+      SUM(CASE WHEN status='arrived' THEN COALESCE(sale_total,quantity * sale) ELSE 0 END) arrived_sales,
       SUM(CASE WHEN status='cancelled' THEN COALESCE(purchase_total,quantity * purchase) ELSE 0 END) refund
       FROM orders''',
     )).single;
@@ -590,12 +705,17 @@ class AppDatabase {
   Future<List<PurchaseOrder>> cancelledOrders({
     int offset = 0,
     int limit = 40,
-  }) async => (await db.rawQuery(
-    '''SELECT o.*, a.name account_name FROM orders o
+  }) => db.transaction(
+    (tx) async => _ordersWithItems(
+      tx,
+      await tx.rawQuery(
+        '''SELECT o.*, a.name account_name FROM orders o
     JOIN accounts a ON a.id = o.account_id WHERE o.status='cancelled'
     ORDER BY o.created_at DESC, o.id DESC LIMIT ? OFFSET ?''',
-    [limit, offset],
-  )).map(PurchaseOrder.fromMap).toList();
+        [limit, offset],
+      ),
+    ),
+  );
   Future<String> theme() async {
     final rows = await db.query(
       'settings',
@@ -625,7 +745,7 @@ class AppDatabase {
     return BackupData(
       products: (await tx.query('products')).map(Product.fromMap).toList(),
       accounts: (await tx.query('accounts')).map(Account.fromMap).toList(),
-      orders: (await tx.query('orders')).map(PurchaseOrder.fromMap).toList(),
+      orders: await _ordersWithItems(tx, await tx.query('orders')),
       theme: settings.isEmpty ? 'system' : settings.single['value'] as String,
       receipts: (await tx.query(
         'profit_receipts',
@@ -689,6 +809,13 @@ class AppDatabase {
       }
       for (final o in verified.orders) {
         batch.insert('orders', o.toMap());
+        for (var position = 0; position < o.items.length; position++) {
+          batch.insert('order_items', {
+            'order_id': o.id,
+            'position': position,
+            ...o.items[position].toMap(),
+          });
+        }
       }
       batch.insert('settings', {
         'key': 'theme',

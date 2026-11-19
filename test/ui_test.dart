@@ -904,6 +904,158 @@ void main() {
     },
   );
 
+  for (final separate in [false, true]) {
+    testWidgets(
+      'multiple products save ${separate ? 'separately' : 'together'} from an account',
+      (tester) async {
+        await tester.runAsync(() async {
+          await db.saveAccount('حساب المنتجات المتعددة');
+          await db.saveProduct('منتج أول', 5000);
+          await db.saveProduct('منتج ثانٍ', 1101);
+          await store.load();
+        });
+        await launch(tester, size: const Size(320, 640), scale: 1.4);
+        await tester.tap(find.text('الحسابات').hitTestable());
+        await flush(tester);
+        await tester.tap(find.text('حساب المنتجات المتعددة').hitTestable());
+        await flush(tester);
+        await tester.tap(
+          find.widgetWithText(FloatingActionButton, 'إضافة طلب'),
+        );
+        await flush(tester);
+        await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
+        await flush(tester);
+        await tester.tap(find.text('منتج أول').hitTestable());
+        await flush(tester);
+        await tester.enterText(
+          find.byKey(const ValueKey('order_quantity')),
+          '٣',
+        );
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('order_add_product')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('order_add_product')));
+        await flush(tester);
+        await tester.tap(find.text('منتج ثانٍ').hitTestable());
+        await flush(tester);
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('order_quantity')),
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('order_quantity')),
+          '٢',
+        );
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('order_purchase')),
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('order_purchase')),
+          '٧٫٢٥',
+        );
+        await tester.tap(find.byKey(const ValueKey('save_form')));
+        await flush(tester);
+        // Validation must also reach the first product, whose editor was hidden.
+        expect(store.report.orders, 0);
+        expect(
+          tester
+              .widget<TextFormField>(
+                find.byKey(const ValueKey('order_quantity')),
+              )
+              .controller!
+              .text,
+          '3',
+        );
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('purchase_total_mode')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('purchase_total_mode')));
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('order_purchase')),
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('order_purchase')),
+          '١٠٠',
+        );
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('purchase_unit_mode')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('purchase_unit_mode')));
+        expect(
+          tester
+              .widget<TextFormField>(
+                find.byKey(const ValueKey('order_purchase')),
+              )
+              .controller!
+              .text,
+          '33.33',
+        );
+        await tester.ensureVisible(find.byKey(const ValueKey('order_item_1')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('order_item_1')));
+        await tester.pumpAndSettle();
+        expect(
+          tester
+              .widget<TextFormField>(
+                find.byKey(const ValueKey('order_purchase')),
+              )
+              .controller!
+              .text,
+          '7.25',
+        );
+        if (separate) {
+          await tester.ensureVisible(
+            find.byKey(const ValueKey('orders_separate')),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey('orders_separate')));
+          await tester.pumpAndSettle();
+        }
+        await tester.tap(find.byKey(const ValueKey('save_form')));
+        await flush(tester);
+        expect(store.report.orders, separate ? 2 : 1);
+        expect(store.report.pieces, 5);
+        expect(store.report.spent, 11450);
+        expect(store.report.expectedSales, 17202);
+        expect(store.report.expectedProfit, 5752);
+        final accountId = (await tester.runAsync(
+          () => db.accounts(),
+        ))!.single.id;
+        final orders = (await tester.runAsync(() => db.orders(accountId)))!;
+        if (!separate) {
+          expect(orders.single.items, hasLength(2));
+          final title = find.text('منتج أول + منتج ثانٍ');
+          await tester.ensureVisible(title);
+          await tester.pumpAndSettle();
+          await tester.tap(title);
+          await flush(tester);
+          expect(find.byKey(const ValueKey('order_item_1')), findsOneWidget);
+          await tester.tap(
+            find.descendant(
+              of: find.byKey(const ValueKey('order_item_1')),
+              matching: find.byTooltip('إزالة المنتج من النموذج'),
+            ),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey('save_form')));
+          await flush(tester);
+          expect(store.report.orders, 1);
+          expect(store.report.pieces, 3);
+          expect(store.report.spent, 10000);
+          expect(store.report.expectedSales, 15000);
+        } else {
+          expect(orders.every((order) => order.items.isEmpty), isTrue);
+        }
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        await flush(tester);
+      },
+    );
+  }
+
   testWidgets('failed save preserves fields and shows actionable error', (
     tester,
   ) async {

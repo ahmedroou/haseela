@@ -569,7 +569,7 @@ class RefundHistoryPage extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          order.productName,
+                          order.displayName,
                           style: Theme.of(
                             context,
                           ).textTheme.titleSmall?.copyWith(fontSize: 13),

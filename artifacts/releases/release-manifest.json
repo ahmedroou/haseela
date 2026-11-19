@@ -1,17 +1,17 @@
 {
-  "date_riyadh": "2026-11-17",
+  "date_riyadh": "2026-11-19",
   "app": "حصيلة",
   "package": "com.riham.haseela",
-  "version": "1.0.5+6",
+  "version": "1.0.6+7",
   "flutter": "3.41.9",
   "dart": "3.11.5",
   "java": "Microsoft OpenJDK 21.0.12.1",
   "gradle": "8.14",
   "min_android_api": 24,
   "target_android_api": 36,
-  "database_version": 8,
-  "backup_version": 5,
-  "tests_passed": 61,
+  "database_version": 9,
+  "backup_version": 6,
+  "tests_passed": 68,
   "test_exit_code": 0,
   "analyze_exit_code": 0,
   "universal_build_exit_code": 0,
@@ -21,44 +21,44 @@
   "signing_certificate_sha256": "f65d3c72d89a120be7973b9370db3bf4b30cd0f96bacadbc2c61ddea8100783e",
   "releases": [
     {
-      "file": "haseela-1.0.5-arm64-v8a.apk",
-      "path": "artifacts/releases/haseela-1.0.5-arm64-v8a.apk",
-      "bytes": 19705580,
+      "file": "haseela-1.0.6-arm64-v8a.apk",
+      "path": "artifacts/releases/haseela-1.0.6-arm64-v8a.apk",
+      "bytes": 19705604,
       "size_mib": 18.79,
-      "sha256": "5031514a7f31054feb9f813c711e3cc1f4cd3026b4209b84f3b0b70af24fe059",
-      "version_code": 2006,
+      "sha256": "a059f42cd1fc407c2579877a73191dbfb1cd87f468ad454a2f02ce8ef918f44e",
+      "version_code": 2007,
       "signature_verified": true,
-      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.5/haseela-1.0.5-arm64-v8a.apk"
+      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.6/haseela-1.0.6-arm64-v8a.apk"
     },
     {
-      "file": "haseela-1.0.5-armeabi-v7a.apk",
-      "path": "artifacts/releases/haseela-1.0.5-armeabi-v7a.apk",
-      "bytes": 17336004,
-      "size_mib": 16.53,
-      "sha256": "34d805d88e3b779fc1f75c5693a9ae236305b409665cda8cf5915ef26c04de54",
-      "version_code": 1006,
+      "file": "haseela-1.0.6-armeabi-v7a.apk",
+      "path": "artifacts/releases/haseela-1.0.6-armeabi-v7a.apk",
+      "bytes": 17401564,
+      "size_mib": 16.6,
+      "sha256": "80e8091dd62f0e81fe9dc613f40e4da1116045f69db4e6d50139afaffddf34c8",
+      "version_code": 1007,
       "signature_verified": true,
-      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.5/haseela-1.0.5-armeabi-v7a.apk"
+      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.6/haseela-1.0.6-armeabi-v7a.apk"
     },
     {
-      "file": "haseela-1.0.5-x86_64.apk",
-      "path": "artifacts/releases/haseela-1.0.5-x86_64.apk",
-      "bytes": 21149466,
+      "file": "haseela-1.0.6-x86_64.apk",
+      "path": "artifacts/releases/haseela-1.0.6-x86_64.apk",
+      "bytes": 21149490,
       "size_mib": 20.17,
-      "sha256": "1a802a1feb6639ac580d517f2c0f097a71c0efd62127238f41bc46556f622c3f",
-      "version_code": 4006,
+      "sha256": "a0c9c293cd74af4c43bc4f85f7fa895ae0b94bce1abd7959b8c210e3c22678f2",
+      "version_code": 4007,
       "signature_verified": true,
-      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.5/haseela-1.0.5-x86_64.apk"
+      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.6/haseela-1.0.6-x86_64.apk"
     },
     {
-      "file": "haseela-1.0.5-universal.apk",
-      "path": "artifacts/releases/haseela-1.0.5-universal.apk",
-      "bytes": 53917750,
-      "size_mib": 51.42,
-      "sha256": "444f56a7912de4fc7db0175d151d7f35642fdabe7773fae3d50741dd1a47a699",
-      "version_code": 6,
+      "file": "haseela-1.0.6-universal.apk",
+      "path": "artifacts/releases/haseela-1.0.6-universal.apk",
+      "bytes": 53983306,
+      "size_mib": 51.48,
+      "sha256": "36ec9557284249d9d5665e5e6052bdf7fa575d5378a7d5caba82ebf70bf8baad",
+      "version_code": 7,
       "signature_verified": true,
-      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.5/haseela-1.0.5-universal.apk"
+      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.6/haseela-1.0.6-universal.apk"
     }
   ],
   "source_hashes": [
@@ -68,7 +68,7 @@
     },
     {
       "file": "lib/database.dart",
-      "sha256": "88ddb645ea47bd63fcb3918bc79242a3050de57a3986455720040bc2b416959c"
+      "sha256": "aa5cc0025a827d4037b9e224a03916d82c6472950f91d76ebe15cf34f4bb037e"
     },
     {
       "file": "lib/design.dart",
@@ -76,15 +76,15 @@
     },
     {
       "file": "lib/domain.dart",
-      "sha256": "2ad1bc1299c82b06c7bd087b2485224fac993245a796267e7c282a44507dc1be"
+      "sha256": "823a64a0d3c68a54f517008de11239695e0508e7dbc10fd38323011a751995f2"
     },
     {
       "file": "lib/finance.dart",
-      "sha256": "e292d9dcd4d2aa1761d3affd082a56e3e07fbb9b4f5b616f9a11abc5c7d307aa"
+      "sha256": "57d07e1ad4324f921b9404f01e0a212b78d9fda4076a97d07203751b7b77900a"
     },
     {
       "file": "lib/forms.dart",
-      "sha256": "72c787f21c27b78f795e7fb777c798d391b95408638c1fbe31c983c238472173"
+      "sha256": "89687f709b0f305a0bfcb2ce50f584e5d04e5039bb3558d2b98419ec2eabc527"
     },
     {
       "file": "lib/home.dart",
@@ -96,11 +96,11 @@
     },
     {
       "file": "lib/order_form.dart",
-      "sha256": "bb45c38642d2fc4be1a38ffaa8c77c01c1d2648007d29e90e0fc4a68b57f6d2a"
+      "sha256": "f7b2f6e169491c1292fc972cd5714d08fe39b7270c1d5c2fda3149395f157273"
     },
     {
       "file": "lib/screens.dart",
-      "sha256": "aadd5f783838098db54d74a9200b69f0938c9c4c1bc448d2cabbcbd50f436803"
+      "sha256": "27ee300db4d001f2f6a84033aceb5b5017878e512bf7a0828e00750acc733bf8"
     },
     {
       "file": "lib/store.dart",
@@ -112,7 +112,7 @@
     },
     {
       "file": "pubspec.yaml",
-      "sha256": "7c6569988d2d001e53c8ee19f5600b317e87ddeaca27c737d9bdb1b020e757ee"
+      "sha256": "10e33bf9402c5c3031b420be8dd765147e95531aaaabeaa94d23c05dc5d86483"
     },
     {
       "file": "pubspec.lock",

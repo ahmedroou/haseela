@@ -1217,7 +1217,7 @@ class OrderTile extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        order.productName,
+                        order.displayName,
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 5),
@@ -1243,7 +1243,7 @@ class OrderTile extends StatelessWidget {
                     } else if (await confirm(
                       context,
                       'حذف الطلب؟',
-                      'سيُحذف طلب «${order.productName}» وتُزال مبالغه من التقرير.',
+                      'سيُحذف طلب «${order.displayName}» وتُزال مبالغه من التقرير.',
                     )) {
                       if (!context.mounted) return;
                       await remove(() async {
@@ -1309,18 +1309,47 @@ class OrderTile extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 18),
-            Wrap(
-              spacing: 22,
-              runSpacing: 12,
-              children: [
-                _price(
-                  context,
-                  order.approximateUnit ? 'شراء الوحدة ≈' : 'شراء الوحدة',
-                  order.purchase,
-                ),
-                _price(context, 'بيع الوحدة', order.sale),
-              ],
-            ),
+            if (order.items.isNotEmpty)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final item in order.items)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${item.productName} · ${item.quantity} قطعة',
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 18,
+                            runSpacing: 8,
+                            children: [
+                              _price(context, 'إجمالي الشراء', item.cost),
+                              _price(context, 'بيع الوحدة', item.sale),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              )
+            else
+              Wrap(
+                spacing: 22,
+                runSpacing: 12,
+                children: [
+                  _price(
+                    context,
+                    order.approximateUnit ? 'شراء الوحدة ≈' : 'شراء الوحدة',
+                    order.purchase,
+                  ),
+                  _price(context, 'بيع الوحدة', order.sale),
+                ],
+              ),
             const Divider(height: 28),
             Wrap(
               spacing: 18,
