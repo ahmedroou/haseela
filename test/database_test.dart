@@ -283,7 +283,7 @@ void main() {
     final path = db.db.path;
     await db.close();
     db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-    expect(await db.db.getVersion(), 9);
+    expect(await db.db.getVersion(), 10);
     expect((await db.report()).spent, 80000);
     expect(await db.theme(), 'dark');
     expect(
@@ -355,4 +355,33 @@ void main() {
       '10000-order SQL report + 80 paged rows: ${clock.elapsedMilliseconds} ms (Windows test host)',
     );
   });
+
+  test(
+    'saveAccounts inserts multiple accounts atomically with closed flags',
+    () async {
+      await expectLater(db.saveAccounts([]), throwsFormatException);
+      final ids = await db.saveAccounts([
+        (name: '  أول@example.com  ', isClosed: false),
+        (name: 'ثانٍ مغلق', isClosed: true),
+      ]);
+      expect(ids, hasLength(2));
+      final first = (await db.account(ids[0]))!;
+      final second = (await db.account(ids[1]))!;
+      expect(first.name, 'أول@example.com');
+      expect(first.isClosed, isFalse);
+      expect(first.closedAt, isNull);
+      expect(second.name, 'ثانٍ مغلق');
+      expect(second.isClosed, isTrue);
+      expect(second.closedAt, isNotNull);
+
+      await expectLater(
+        db.saveAccounts([
+          (name: 'لن يُحفظ', isClosed: false),
+          (name: '   ', isClosed: false),
+        ]),
+        throwsFormatException,
+      );
+      expect((await db.accounts()).length, 2);
+    },
+  );
 }

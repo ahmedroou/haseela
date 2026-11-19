@@ -17,7 +17,7 @@ class AppDatabase {
     final db = await f.openDatabase(
       location,
       options: OpenDatabaseOptions(
-        version: 9,
+        version: 10,
         onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: (db, version) async {
           await db.execute('''CREATE TABLE products (
@@ -125,6 +125,9 @@ class AppDatabase {
             }
             await _createOrderItems(db);
           }
+          if (oldVersion >= 8 && oldVersion < 10) {
+            await _migrateProfitShareMaxRate(db);
+          }
         },
         onDowngrade: (db, oldVersion, newVersion) async =>
             throw StateError('قاعدة البيانات من إصدار أحدث؛ حدّثي التطبيق'),
@@ -194,6 +197,18 @@ class AppDatabase {
       rate INTEGER NOT NULL CHECK(rate BETWEEN 1 AND ${ProfitShare.maxRate}),
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)''');
 
+  static Future<void> _migrateProfitShareMaxRate(DatabaseExecutor db) async {
+    // SQLite embeds the old CHECK bound in the table DDL; rebuild the table to raise it.
+    await _createProfitShare(db);
+    await db.execute('ALTER TABLE profit_share RENAME TO profit_share_old');
+    await _createProfitShare(db);
+    await db.execute(
+      'INSERT INTO profit_share (id, name, rate, created_at, updated_at) '
+      'SELECT id, name, rate, created_at, updated_at FROM profit_share_old',
+    );
+    await db.execute('DROP TABLE profit_share_old');
+  }
+
   static Future<void> _createAccountIndexes(DatabaseExecutor db) async {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS account_closed_date ON accounts(is_closed, closed_at ASC, id ASC)',
@@ -248,20 +263,58 @@ class AppDatabase {
       final current = old == null ? null : await _accountRow(tx, old.id);
       final now = DateTime.now().millisecondsSinceEpoch;
       final closed = isClosed ?? current?.isClosed ?? false;
-      final values = {
-        'name': name.trim(),
-        'created_at': current?.createdAt ?? now,
-        'updated_at': now,
-        'is_closed': closed ? 1 : 0,
-        'closed_at': closed
-            ? (current?.isClosed == true ? current!.closedAt : now)
-            : null,
-      };
+      final values = _accountRowValues(
+        name,
+        isClosed: closed,
+        now: now,
+        current: current,
+      );
       if (old == null) return tx.insert('accounts', values);
       await tx.update('accounts', values, where: 'id = ?', whereArgs: [old.id]);
       return old.id;
     });
   }
+
+  /// Inserts one or more new accounts atomically inside a single transaction.
+  Future<List<int>> saveAccounts(
+    List<({String name, bool isClosed})> entries,
+  ) async {
+    final accounts = entries.toList(growable: false);
+    if (accounts.isEmpty) {
+      throw const FormatException('أضيفي حسابًا واحدًا على الأقل');
+    }
+    for (final entry in accounts) {
+      _name(entry.name, limit: 254);
+    }
+    return db.transaction((tx) async {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final ids = <int>[];
+      for (final entry in accounts) {
+        ids.add(
+          await tx.insert(
+            'accounts',
+            _accountRowValues(entry.name, isClosed: entry.isClosed, now: now),
+          ),
+        );
+      }
+      return ids;
+    });
+  }
+
+  static Map<String, Object?> _accountRowValues(
+    String name, {
+    required bool isClosed,
+    required int now,
+    Account? current,
+  }) => {
+    'name': name.trim(),
+    'created_at': current?.createdAt ?? now,
+    'updated_at': now,
+    'is_closed': isClosed ? 1 : 0,
+    'closed_at': isClosed
+        ? (current?.isClosed == true ? current!.closedAt : now)
+        : null,
+  };
 
   static Future<Account> _accountRow(DatabaseExecutor tx, int id) async {
     final rows = await tx.query('accounts', where: 'id = ?', whereArgs: [id]);
@@ -589,7 +642,9 @@ class AppDatabase {
     final cleaned = name.trim();
     _name(cleaned);
     if (!ProfitShare.validRate(rate)) {
-      throw const FormatException('النسبة يجب أن تكون أكبر من صفر وحتى 35٪');
+      throw const FormatException(
+        'النسبة يجب أن تكون أكبر من صفر وحتى ${ProfitShare.maxPercent}٪',
+      );
     }
     await db.transaction((tx) async {
       final previous = await _profitShare(tx);

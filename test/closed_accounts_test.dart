@@ -210,7 +210,7 @@ void main() {
       final path = db.db.path;
       await db.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 9);
+      expect(await db.db.getVersion(), 10);
       expect((await db.account(a))!.closedAt, 2000);
       expect((await db.account(a))!.updatedAt, 2000);
       expect((await db.account(b))!.closedAt, isNull);

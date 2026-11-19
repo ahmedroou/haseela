@@ -279,9 +279,10 @@ class ProfitShare {
     required this.updatedAt,
   });
 
-  static const maxRate = 3500;
+  static const maxRate = 5000;
+  static const maxPercent = maxRate ~/ 100;
   final String name;
-  // Hundredths of one percent: 3500 represents 35%.
+  // Hundredths of one percent: 5000 represents 50%.
   final int rate, createdAt, updatedAt;
 
   static bool validRate(int rate) => rate > 0 && rate <= maxRate;

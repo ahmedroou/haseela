@@ -2,16 +2,16 @@
   "date_riyadh": "2026-11-19",
   "app": "حصيلة",
   "package": "com.riham.haseela",
-  "version": "1.0.6+7",
+  "version": "1.0.7+8",
   "flutter": "3.41.9",
   "dart": "3.11.5",
   "java": "Microsoft OpenJDK 21.0.12.1",
   "gradle": "8.14",
   "min_android_api": 24,
   "target_android_api": 36,
-  "database_version": 9,
+  "database_version": 10,
   "backup_version": 6,
-  "tests_passed": 68,
+  "tests_passed": 73,
   "test_exit_code": 0,
   "analyze_exit_code": 0,
   "universal_build_exit_code": 0,
@@ -21,44 +21,44 @@
   "signing_certificate_sha256": "f65d3c72d89a120be7973b9370db3bf4b30cd0f96bacadbc2c61ddea8100783e",
   "releases": [
     {
-      "file": "haseela-1.0.6-arm64-v8a.apk",
-      "path": "artifacts/releases/haseela-1.0.6-arm64-v8a.apk",
-      "bytes": 19705604,
-      "size_mib": 18.79,
-      "sha256": "a059f42cd1fc407c2579877a73191dbfb1cd87f468ad454a2f02ce8ef918f44e",
-      "version_code": 2007,
+      "file": "haseela-1.0.7-arm64-v8a.apk",
+      "path": "artifacts/releases/haseela-1.0.7-arm64-v8a.apk",
+      "bytes": 19771140,
+      "size_mib": 18.86,
+      "sha256": "e718cc50f2f5f85a6cc5afe52719ef4b514f276de229878edc2c019b91dc3dfb",
+      "version_code": 2008,
       "signature_verified": true,
-      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.6/haseela-1.0.6-arm64-v8a.apk"
+      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.7/haseela-1.0.7-arm64-v8a.apk"
     },
     {
-      "file": "haseela-1.0.6-armeabi-v7a.apk",
-      "path": "artifacts/releases/haseela-1.0.6-armeabi-v7a.apk",
-      "bytes": 17401564,
-      "size_mib": 16.6,
-      "sha256": "80e8091dd62f0e81fe9dc613f40e4da1116045f69db4e6d50139afaffddf34c8",
-      "version_code": 1007,
+      "file": "haseela-1.0.7-armeabi-v7a.apk",
+      "path": "artifacts/releases/haseela-1.0.7-armeabi-v7a.apk",
+      "bytes": 17434332,
+      "size_mib": 16.63,
+      "sha256": "30bcc4e35857e3095733d05a67c8f503c83424196feae6390aa75d0021fd9441",
+      "version_code": 1008,
       "signature_verified": true,
-      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.6/haseela-1.0.6-armeabi-v7a.apk"
+      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.7/haseela-1.0.7-armeabi-v7a.apk"
     },
     {
-      "file": "haseela-1.0.6-x86_64.apk",
-      "path": "artifacts/releases/haseela-1.0.6-x86_64.apk",
-      "bytes": 21149490,
-      "size_mib": 20.17,
-      "sha256": "a0c9c293cd74af4c43bc4f85f7fa895ae0b94bce1abd7959b8c210e3c22678f2",
-      "version_code": 4007,
+      "file": "haseela-1.0.7-x86_64.apk",
+      "path": "artifacts/releases/haseela-1.0.7-x86_64.apk",
+      "bytes": 21215026,
+      "size_mib": 20.23,
+      "sha256": "fed307dea1e99ff298badf0606ceef7151e2603f6532cb15e09e38504d0e0a16",
+      "version_code": 4008,
       "signature_verified": true,
-      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.6/haseela-1.0.6-x86_64.apk"
+      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.7/haseela-1.0.7-x86_64.apk"
     },
     {
-      "file": "haseela-1.0.6-universal.apk",
-      "path": "artifacts/releases/haseela-1.0.6-universal.apk",
-      "bytes": 53983306,
-      "size_mib": 51.48,
-      "sha256": "36ec9557284249d9d5665e5e6052bdf7fa575d5378a7d5caba82ebf70bf8baad",
-      "version_code": 7,
+      "file": "haseela-1.0.7-universal.apk",
+      "path": "artifacts/releases/haseela-1.0.7-universal.apk",
+      "bytes": 54147150,
+      "size_mib": 51.64,
+      "sha256": "52f9cbf06cb4b72dd97423cacc5f5fd66dd8d6ed8ecc64b3302c9082d508a4c7",
+      "version_code": 8,
       "signature_verified": true,
-      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.6/haseela-1.0.6-universal.apk"
+      "download_url": "https://github.com/ahmedroou/haseela/releases/download/v1.0.7/haseela-1.0.7-universal.apk"
     }
   ],
   "source_hashes": [
@@ -68,7 +68,7 @@
     },
     {
       "file": "lib/database.dart",
-      "sha256": "aa5cc0025a827d4037b9e224a03916d82c6472950f91d76ebe15cf34f4bb037e"
+      "sha256": "74af0060128b43e6528615cc5bb7c0ce401d8aa137d4d332ee2397fc5a4e4000"
     },
     {
       "file": "lib/design.dart",
@@ -76,31 +76,31 @@
     },
     {
       "file": "lib/domain.dart",
-      "sha256": "823a64a0d3c68a54f517008de11239695e0508e7dbc10fd38323011a751995f2"
+      "sha256": "4933485be06030c096ce73ad4c858d01b10ec7f5b80e3f67f912d8a0f54f86d0"
     },
     {
       "file": "lib/finance.dart",
-      "sha256": "57d07e1ad4324f921b9404f01e0a212b78d9fda4076a97d07203751b7b77900a"
+      "sha256": "9099429915dbb081e1a7121a7ec36e67e337812577de1ac47f06081b93a56527"
     },
     {
       "file": "lib/forms.dart",
-      "sha256": "89687f709b0f305a0bfcb2ce50f584e5d04e5039bb3558d2b98419ec2eabc527"
+      "sha256": "cf235ff811d156e7e76b1d81ff99996b379a7217220c43debff9197789083263"
     },
     {
       "file": "lib/home.dart",
-      "sha256": "b40eccb1eb8baf56c7964178a370c830890ec6cd3135ab145a6beb58cd45bc41"
+      "sha256": "bdc35122d51592047545fec6ff9685587b80ea936c743f2575e55121197beb49"
     },
     {
       "file": "lib/main.dart",
-      "sha256": "e5dfb59348615fb77183c13bbee9367bfe51a8d238055d4c44fd992856c5b865"
+      "sha256": "de44238397bf4dd7566f06c542deaba2c2f9176e0be134f867cd39f9e9c7de03"
     },
     {
       "file": "lib/order_form.dart",
-      "sha256": "f7b2f6e169491c1292fc972cd5714d08fe39b7270c1d5c2fda3149395f157273"
+      "sha256": "9086d93b558908cb1432e81ca7712c8527990d47acacab50bd195bf5a4fff5bb"
     },
     {
       "file": "lib/screens.dart",
-      "sha256": "27ee300db4d001f2f6a84033aceb5b5017878e512bf7a0828e00750acc733bf8"
+      "sha256": "eb52e4891c1f4b8a7d1c0dd442880388bd25a28f42f3806e5d4020b1eefff562"
     },
     {
       "file": "lib/store.dart",
@@ -112,7 +112,7 @@
     },
     {
       "file": "pubspec.yaml",
-      "sha256": "10e33bf9402c5c3031b420be8dd765147e95531aaaabeaa94d23c05dc5d86483"
+      "sha256": "e036ebaeffd48ccd7024b726ade458a4b1f35222fe7dd896ce6888e58f956730"
     },
     {
       "file": "pubspec.lock",

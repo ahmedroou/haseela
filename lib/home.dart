@@ -7,9 +7,22 @@ import 'screens.dart';
 import 'store.dart';
 
 Future<void> quickOrder(BuildContext context, AppStore store) async {
+  if (ModalRoute.of(context)?.isCurrent != true) return;
   final Account? account;
   if (store.report.accounts == 0) {
-    account = await accountSheet(context, store);
+    final added = await accountsSheet(context, store);
+    if (!context.mounted ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        added.isEmpty) {
+      return;
+    }
+    if (added.length == 1 && !added.single.isClosed) {
+      account = added.single;
+    } else if (added.any((a) => !a.isClosed)) {
+      account = await openSheet<Account>(context, AccountPicker(store: store));
+    } else {
+      return;
+    }
   } else {
     account = await openSheet<Account>(context, AccountPicker(store: store));
   }
@@ -88,7 +101,7 @@ class HomePage extends StatelessWidget {
                 TextButton.icon(
                   onPressed: store.busy
                       ? null
-                      : () => accountSheet(context, store),
+                      : () => accountsSheet(context, store),
                   icon: const Icon(Icons.alternate_email_rounded, size: 18),
                   label: const Text('إضافة حساب'),
                 ),
@@ -107,7 +120,7 @@ class HomePage extends StatelessWidget {
       subtitle: 'بريد إلكتروني أو اسم تختارينه، ثم أضيفي طلبك.',
       icon: Icons.mark_email_unread_outlined,
       button: 'إضافة حساب',
-      action: () => accountSheet(context, store),
+      action: () => accountsSheet(context, store),
     ),
     item: (a) => Padding(
       key: ValueKey(a.id),
@@ -182,10 +195,16 @@ class _AccountPickerState extends State<AccountPicker> {
   Future<void> add() async {
     if (adding) return;
     setState(() => adding = true);
-    final result = await accountSheet(context, widget.store);
+    final added = await accountsSheet(context, widget.store);
     if (!mounted) return;
     setState(() => adding = false);
-    if (result != null) Navigator.pop(context, result);
+    if (ModalRoute.of(context)?.isCurrent != true) return;
+    if (added.length == 1 && !added.single.isClosed) {
+      Navigator.pop(context, added.single);
+    } else if (added.isNotEmpty) {
+      if (query.text.isNotEmpty) query.clear();
+      await load(reset: true);
+    }
   }
 
   @override

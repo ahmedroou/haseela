@@ -113,27 +113,61 @@ class _HaseelaBootstrapState extends State<HaseelaBootstrap> {
         );
 }
 
-class HaseelaApp extends StatelessWidget {
+class HaseelaApp extends StatefulWidget {
   const HaseelaApp({super.key, required this.store});
   final AppStore store;
+
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: store,
-    builder: (context, _) => MaterialApp(
-      title: 'حصيلة',
-      debugShowCheckedModeBanner: false,
-      locale: const Locale('ar'),
-      supportedLocales: const [Locale('ar')],
-      localizationsDelegates: const [
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-      theme: appTheme(Brightness.light),
-      darkTheme: appTheme(Brightness.dark),
-      themeMode: store.themeMode,
-      home: AppShell(store: store),
-    ),
+  State<HaseelaApp> createState() => _HaseelaAppState();
+}
+
+class _HaseelaAppState extends State<HaseelaApp> {
+  late ThemeMode _themeMode = widget.store.themeMode;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.store.addListener(_onStoreChanged);
+  }
+
+  @override
+  void didUpdateWidget(HaseelaApp old) {
+    super.didUpdateWidget(old);
+    if (old.store != widget.store) {
+      old.store.removeListener(_onStoreChanged);
+      _themeMode = widget.store.themeMode;
+      widget.store.addListener(_onStoreChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.store.removeListener(_onStoreChanged);
+    super.dispose();
+  }
+
+  void _onStoreChanged() {
+    final next = widget.store.themeMode;
+    if (next != _themeMode && mounted) {
+      setState(() => _themeMode = next);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'حصيلة',
+    debugShowCheckedModeBanner: false,
+    locale: const Locale('ar'),
+    supportedLocales: const [Locale('ar')],
+    localizationsDelegates: const [
+      GlobalMaterialLocalizations.delegate,
+      GlobalWidgetsLocalizations.delegate,
+      GlobalCupertinoLocalizations.delegate,
+    ],
+    theme: appTheme(Brightness.light),
+    darkTheme: appTheme(Brightness.dark),
+    themeMode: _themeMode,
+    home: AppShell(store: widget.store),
   );
 }
 
@@ -208,7 +242,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      AnimatedBuilder(animation: widget.store, builder: _buildShell);
+
+  Widget _buildShell(BuildContext context, Widget? child) {
     final scheme = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
     final pages = [
@@ -421,22 +458,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         ),
         floatingActionButton: selected == 0 || selected == 3
             ? null
-            : Pressable(
-                onTap: widget.store.busy
+            : FloatingActionButton.extended(
+                key: const ValueKey('add_item'),
+                onPressed: widget.store.busy
                     ? null
                     : () => selected == 1
-                          ? accountSheet(context, widget.store)
+                          ? accountsSheet(context, widget.store)
                           : productSheet(context, widget.store),
-                child: FloatingActionButton.extended(
-                  key: const ValueKey('add_item'),
-                  onPressed: widget.store.busy
-                      ? null
-                      : () => selected == 1
-                            ? accountSheet(context, widget.store)
-                            : productSheet(context, widget.store),
-                  icon: const Icon(Icons.add_rounded),
-                  label: Text(selected == 1 ? 'إضافة حساب' : 'إضافة منتج'),
-                ),
+                icon: const Icon(Icons.add_rounded),
+                label: Text(selected == 1 ? 'إضافة حساب' : 'إضافة منتج'),
               ),
         bottomNavigationBar: Container(
           decoration: BoxDecoration(

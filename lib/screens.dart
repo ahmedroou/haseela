@@ -787,7 +787,7 @@ class AccountsPage extends StatelessWidget {
       subtitle: 'شهر جديد، شحنة جديدة، أو اسم تحبينه.',
       icon: Icons.folder_open_rounded,
       button: 'إضافة حساب',
-      action: () => accountSheet(context, store),
+      action: () => accountsSheet(context, store),
     ),
     item: (a) => Padding(
       key: ValueKey(a.id),
@@ -1088,17 +1088,12 @@ class _AccountPageState extends State<AccountPage> {
       ),
       floatingActionButton: missing || account.isClosed
           ? null
-          : Pressable(
-              onTap: widget.store.busy
+          : FloatingActionButton.extended(
+              onPressed: widget.store.busy
                   ? null
                   : () => orderSheet(context, widget.store, account.id),
-              child: FloatingActionButton.extended(
-                onPressed: widget.store.busy
-                    ? null
-                    : () => orderSheet(context, widget.store, account.id),
-                icon: const Icon(Icons.add_rounded),
-                label: const Text('إضافة طلب'),
-              ),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('إضافة طلب'),
             ),
       body: missing
           ? const EmptyState(

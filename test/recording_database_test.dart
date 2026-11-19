@@ -270,7 +270,7 @@ void main() {
       final path = db.db.path;
       await db.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 9);
+      expect(await db.db.getVersion(), 10);
       expect((await db.report()).spent, 10000);
       expect((await db.report()).expectedSales, 15000);
       expect((await db.orders(account)).single.items, isEmpty);
@@ -407,24 +407,24 @@ void main() {
       final path = db.db.path;
       await db.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 9);
+      expect(await db.db.getVersion(), 10);
       expect((await db.report()).expectedProfit, 15000);
       expect((await db.report()).profitShare, isNull);
       final legacy = jsonDecode((await db.snapshot()).encode()) as Map;
       legacy['version'] = 4;
       legacy.remove('profit_share');
 
-      await db.saveProfitShare('  نور  ', 3500);
+      await db.saveProfitShare('  نور  ', 5000);
       await expectLater(
-        db.saveProfitShare('مرفوض', 3501),
+        db.saveProfitShare('مرفوض', 5001),
         throwsFormatException,
       );
       await db.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
       final report = await db.report();
       expect(report.profitShare!.name, 'نور');
-      expect(report.thirdPartyProfit, 6300);
-      expect(report.expectedProfit, 8700);
+      expect(report.thirdPartyProfit, 9000);
+      expect(report.expectedProfit, 6000);
       expect(report.spent, 12000);
       expect(report.realizedProfit, 3000);
 
@@ -440,9 +440,9 @@ void main() {
         (await db.report()).profitShare!.toMap(),
         report.profitShare!.toMap(),
       );
-      expect((await db.report()).expectedProfit, 8700);
+      expect((await db.report()).expectedProfit, 6000);
       final invalid = jsonDecode(snapshot.encode()) as Map;
-      invalid['profit_share']['rate'] = 3501;
+      invalid['profit_share']['rate'] = 5001;
       expect(
         () => BackupData.decode(jsonEncode(invalid)),
         throwsFormatException,
@@ -456,6 +456,36 @@ void main() {
       );
       await db.removeProfitShare();
       expect((await db.report()).expectedProfit, 15000);
+    },
+  );
+
+  test(
+    'v9 database with old 3500 CHECK constraint upgrades to allow up to 5000 while keeping share',
+    () async {
+      await db.db.execute('DROP TABLE profit_share');
+      await db.db.execute('''CREATE TABLE profit_share (
+        id INTEGER PRIMARY KEY CHECK(id = 1), name TEXT NOT NULL,
+        rate INTEGER NOT NULL CHECK(rate BETWEEN 1 AND 3500),
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)''');
+      await db.db.insert('profit_share', {
+        'id': 1,
+        'name': 'نور',
+        'rate': 3500,
+        'created_at': 1000,
+        'updated_at': 2000,
+      });
+      await db.db.setVersion(9);
+      final path = db.db.path;
+      await db.close();
+      db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
+      expect(await db.db.getVersion(), 10);
+      final kept = (await db.report()).profitShare!;
+      expect(kept.name, 'نور');
+      expect(kept.rate, 3500);
+      expect(kept.createdAt, 1000);
+      expect(kept.updatedAt, 2000);
+      await db.saveProfitShare('نور', 5000);
+      expect((await db.report()).profitShare!.rate, 5000);
     },
   );
 
@@ -598,7 +628,7 @@ void main() {
       );
       await old.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 9);
+      expect(await db.db.getVersion(), 10);
       expect((await db.product(1))!.lastPurchase, 8000);
       expect((await db.orders(1)).length, 2);
       expect((await db.report()).spent, 15500);

@@ -185,13 +185,13 @@ class _ProfitShareFormState extends State<_ProfitShareForm> {
             controller: rate,
             enabled: !saving,
             validator: (value) => ProfitShare.parseRate(value ?? '') == null
-                ? 'أدخلي نسبة أكبر من صفر وحتى 35٪'
+                ? 'أدخلي نسبة أكبر من صفر وحتى ${ProfitShare.maxPercent}٪'
                 : null,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             textDirection: TextDirection.ltr,
             inputFormatters: [numberInputFormatter],
             decoration: const InputDecoration(
-              labelText: 'النسبة (٪)، حتى 35٪',
+              labelText: 'النسبة (٪)، حتى ${ProfitShare.maxPercent}٪',
               hintText: 'مثال: 20 أو 12.5',
             ),
           ),

@@ -228,6 +228,7 @@ class _OrderFormState extends State<OrderForm> {
       saving = true;
       error = null;
     });
+    final route = ModalRoute.of(context);
     try {
       await widget.store.mutate(
         () => widget.store.database.saveOrders(
@@ -238,7 +239,7 @@ class _OrderFormState extends State<OrderForm> {
           old: widget.order,
         ),
       );
-      if (mounted) Navigator.pop(context, true);
+      if (mounted && route?.isCurrent == true) Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -256,11 +257,12 @@ class _OrderFormState extends State<OrderForm> {
     final profit = status == OrderStatus.cancelled ? 0 : revenue - totalCost;
     final approximate = count > 0 && cost != unit * count;
     final multiple = drafts.length > 1;
-    return _CompactFrame(
+    return CompactSheetFrame(
       title: widget.order == null ? 'طلب جديد' : 'تعديل الطلب',
       saving: saving,
       save: save,
       scrollController: fieldsScroll,
+      scrollKey: const ValueKey('order_fields_scroll'),
       saveLabel: multiple && separate
           ? 'حفظ الطلبات (${drafts.length})'
           : 'حفظ الطلب',
@@ -598,97 +600,3 @@ const _currency = SizedBox(
     ),
   ),
 );
-
-/// The save button stays outside the scroll region. Standard phone layouts fit
-/// in one sheet; keyboard/accessibility/long names retain a safe scroll fallback.
-class _CompactFrame extends StatelessWidget {
-  const _CompactFrame({
-    required this.title,
-    required this.child,
-    required this.saving,
-    required this.save,
-    required this.saveLabel,
-    required this.scrollController,
-  });
-  final String title, saveLabel;
-  final ScrollController scrollController;
-  final Widget child;
-  final bool saving;
-  final VoidCallback save;
-  @override
-  Widget build(BuildContext context) => PopScope(
-    canPop: !saving,
-    child: LayoutBuilder(
-      builder: (context, constraints) {
-        final keyboard = MediaQuery.viewInsetsOf(context).bottom;
-        return Padding(
-          padding: EdgeInsets.only(bottom: keyboard),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: (constraints.maxHeight - keyboard).clamp(
-                0,
-                double.infinity,
-              ),
-            ),
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                0,
-                16,
-                14 + MediaQuery.paddingOf(context).bottom,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          title,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'إغلاق',
-                        onPressed: saving ? null : () => Navigator.pop(context),
-                        icon: const Icon(Icons.close_rounded, size: 20),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Flexible(
-                    child: SingleChildScrollView(
-                      key: const ValueKey('order_fields_scroll'),
-                      controller: scrollController,
-                      child: child,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  FilledButton(
-                    key: const ValueKey('save_form'),
-                    onPressed: saving ? null : save,
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size.fromHeight(46),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 10,
-                      ),
-                    ),
-                    child: saving
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Text(saveLabel),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    ),
-  );
-}

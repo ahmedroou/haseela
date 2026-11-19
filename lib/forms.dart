@@ -273,6 +273,114 @@ class SheetFrame extends StatelessWidget {
   );
 }
 
+/// A compact modal sheet frame whose header and primary save button stay pinned
+/// outside the scroll region, keeping forms usable on small screens and keyboards.
+class CompactSheetFrame extends StatelessWidget {
+  const CompactSheetFrame({
+    super.key,
+    required this.title,
+    this.subtitle,
+    required this.child,
+    required this.saving,
+    required this.save,
+    this.saveLabel = 'حفظ',
+    this.scrollController,
+    this.scrollKey,
+  });
+
+  final String title, saveLabel;
+  final String? subtitle;
+  final ScrollController? scrollController;
+  final Key? scrollKey;
+  final Widget child;
+  final bool saving;
+  final VoidCallback save;
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: !saving,
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+        return Padding(
+          padding: EdgeInsets.only(bottom: keyboard),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: (constraints.maxHeight - keyboard).clamp(
+                0,
+                double.infinity,
+              ),
+            ),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                0,
+                16,
+                14 + MediaQuery.paddingOf(context).bottom,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'إغلاق',
+                        onPressed: saving ? null : () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded, size: 20),
+                      ),
+                    ],
+                  ),
+                  if (subtitle != null) ...[
+                    Text(
+                      subtitle!,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 10),
+                  ] else
+                    const SizedBox(height: 4),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      key: scrollKey,
+                      controller: scrollController,
+                      child: child,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  FilledButton(
+                    key: const ValueKey('save_form'),
+                    onPressed: saving ? null : save,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(46),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                    ),
+                    child: saving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(saveLabel),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    ),
+  );
+}
+
 String? nameValidator(String? text) => text == null || text.trim().isEmpty
     ? 'اكتبي الاسم أولًا'
     : text.length > 120
@@ -282,28 +390,71 @@ String? priceValidator(String? text) => parseMoney(text ?? '') == null
     ? 'أدخلي سعرًا صحيحًا، حتى منزلتين عشريتين'
     : null;
 
+String _accountsAddedNotice(int count) {
+  if (count == 1) return 'أُضيف الحساب، بداية جميلة ✨';
+  if (count == 2) return 'تمت إضافة حسابين، بداية جميلة ✨';
+  if (count <= 10) return 'تمت إضافة $count حسابات، بداية جميلة ✨';
+  return 'تمت إضافة $count حسابًا، بداية جميلة ✨';
+}
+
+/// Opens the account creation sheet supporting adding one or multiple accounts.
+Future<List<Account>> accountsSheet(
+  BuildContext context,
+  AppStore store,
+) async {
+  if (ModalRoute.of(context)?.isCurrent != true) return const [];
+  final saved = await openSheet<List<int>>(context, AccountForm(store: store));
+  if (saved == null || saved.isEmpty) return const [];
+  if (context.mounted) {
+    notice(context, _accountsAddedNotice(saved.length));
+  }
+  try {
+    final created = <Account>[];
+    for (final id in saved) {
+      final account = await store.database.account(id);
+      if (account != null) created.add(account);
+    }
+    return created;
+  } catch (e) {
+    if (context.mounted) notice(context, friendlyError(e));
+    return const [];
+  }
+}
+
 Future<Account?> accountSheet(
   BuildContext context,
   AppStore store, {
   Account? account,
 }) async {
-  final saved = await openSheet<int>(
+  if (account == null) {
+    final created = await accountsSheet(context, store);
+    return created.length == 1 ? created.single : created.firstOrNull;
+  }
+  if (ModalRoute.of(context)?.isCurrent != true) return null;
+  final saved = await openSheet<List<int>>(
     context,
     AccountForm(store: store, account: account),
   );
-  if (saved != null && context.mounted) {
-    notice(
-      context,
-      account == null ? 'أُضيف الحساب، بداية جميلة ✨' : 'تم حفظ الحساب',
-    );
+  if (saved != null && saved.isNotEmpty && context.mounted) {
+    notice(context, 'تم حفظ الحساب');
   }
-  if (saved == null) return null;
+  if (saved == null || saved.isEmpty) return null;
   try {
-    return await store.database.account(saved);
+    return await store.database.account(saved.single);
   } catch (e) {
     if (context.mounted) notice(context, friendlyError(e));
     return null;
   }
+}
+
+class _AccountDraft {
+  _AccountDraft({String initialName = '', this.isClosed = false})
+    : name = TextEditingController(text: initialName);
+
+  final TextEditingController name;
+  bool isClosed;
+
+  void dispose() => name.dispose();
 }
 
 class AccountForm extends StatefulWidget {
@@ -316,31 +467,92 @@ class AccountForm extends StatefulWidget {
 
 class _AccountFormState extends State<AccountForm> {
   final key = GlobalKey<FormState>();
-  late final name = TextEditingController(text: widget.account?.name ?? '');
-  late bool isClosed = widget.account?.isClosed ?? false;
+  final scroll = ScrollController();
+  late final bool editing = widget.account != null;
+  final drafts = <_AccountDraft>[];
+  final removedDrafts = <_AccountDraft>[];
   bool saving = false;
   String? error;
+
+  @override
+  void initState() {
+    super.initState();
+    drafts.add(
+      _AccountDraft(
+        initialName: widget.account?.name ?? '',
+        isClosed: widget.account?.isClosed ?? false,
+      ),
+    );
+  }
+
   @override
   void dispose() {
-    name.dispose();
+    for (final draft in [...drafts, ...removedDrafts]) {
+      draft.dispose();
+    }
+    scroll.dispose();
     super.dispose();
   }
 
+  void addDraft() {
+    if (saving || editing) return;
+    setState(() {
+      drafts.add(_AccountDraft());
+      error = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && scroll.hasClients) {
+        scroll.animateTo(
+          scroll.position.maxScrollExtent,
+          duration: motion(context, 180),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    });
+  }
+
+  void removeDraft(int index) {
+    if (saving || editing || drafts.length <= 1) return;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      removedDrafts.add(drafts.removeAt(index));
+      error = null;
+    });
+  }
+
   Future<void> save() async {
-    if (saving || !key.currentState!.validate()) return;
+    if (saving) return;
+    final invalid = key.currentState!.validateGranularly();
+    if (invalid.isNotEmpty) {
+      final field = invalid.first;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (field.mounted) {
+          Scrollable.ensureVisible(field.context, alignment: .15);
+        }
+      });
+      return;
+    }
     setState(() {
       saving = true;
       error = null;
     });
+    final route = ModalRoute.of(context);
     try {
-      final id = await widget.store.mutate(
-        () => widget.store.database.saveAccount(
-          name.text,
-          old: widget.account,
-          isClosed: isClosed,
-        ),
-      );
-      if (mounted) Navigator.pop(context, id);
+      final ids = await widget.store.mutate(() async {
+        if (editing) {
+          final id = await widget.store.database.saveAccount(
+            drafts.single.name.text,
+            old: widget.account,
+            isClosed: drafts.single.isClosed,
+          );
+          return [id];
+        }
+        return widget.store.database.saveAccounts([
+          for (final draft in drafts)
+            (name: draft.name.text, isClosed: draft.isClosed),
+        ]);
+      });
+      if (mounted && route?.isCurrent == true) Navigator.pop(context, ids);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -352,19 +564,183 @@ class _AccountFormState extends State<AccountForm> {
   }
 
   @override
-  Widget build(BuildContext context) => SheetFrame(
-    title: widget.account == null ? 'حساب جديد' : 'تعديل الحساب',
-    subtitle: 'بريدك الإلكتروني، أو أي اسم يجمع طلباتك.',
-    saving: saving,
-    save: save,
-    child: Form(
-      key: key,
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final multiple = !editing && drafts.length > 1;
+    final title = editing
+        ? 'تعديل الحساب'
+        : drafts.length == 1
+        ? 'حساب جديد'
+        : 'إضافة ${drafts.length} حسابات';
+    final saveLabel = editing
+        ? 'حفظ'
+        : drafts.length == 1
+        ? 'حفظ الحساب'
+        : 'حفظ الحسابات (${drafts.length})';
+    return CompactSheetFrame(
+      title: title,
+      subtitle: 'بريدك الإلكتروني، أو أي اسم يجمع طلباتك.',
+      saving: saving,
+      save: save,
+      saveLabel: saveLabel,
+      scrollController: scroll,
+      scrollKey: const ValueKey('account_fields_scroll'),
+      child: Form(
+        key: key,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var index = 0; index < drafts.length; index++)
+              _accountCard(context, scheme, drafts[index], index, multiple),
+            if (!editing)
+              OutlinedButton.icon(
+                key: const ValueKey('add_another_account'),
+                onPressed: saving ? null : addDraft,
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(40),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
+                ),
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('إضافة حساب آخر'),
+              ),
+            if (error != null) FormErrorText(error!),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _accountCard(
+    BuildContext context,
+    ColorScheme scheme,
+    _AccountDraft draft,
+    int index,
+    bool removable,
+  ) => Padding(
+    key: ObjectKey(draft),
+    padding: const EdgeInsets.only(bottom: 8),
+    child: Container(
+      padding: const EdgeInsets.fromLTRB(10, 7, 10, 9),
+      decoration: BoxDecoration(
+        color: softTint(context, lilac, .05),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .75)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          completeTextField(
-            key: const ValueKey('account_name'),
-            controller: name,
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: softTint(context, lilac, .12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  editing ? 'بيانات الحساب' : 'حساب ${index + 1}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.primary,
+                  ),
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: saving
+                        ? null
+                        : () =>
+                              setState(() => draft.isClosed = !draft.isClosed),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 2,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            draft.isClosed
+                                ? Icons.lock_rounded
+                                : Icons.lock_open_rounded,
+                            size: 12,
+                            color: draft.isClosed
+                                ? scheme.primary
+                                : scheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'مغلق',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: draft.isClosed
+                                      ? scheme.primary
+                                      : scheme.onSurfaceVariant,
+                                ),
+                          ),
+                          const SizedBox(width: 4),
+                          SizedBox(
+                            width: 32,
+                            height: 18,
+                            child: FittedBox(
+                              fit: BoxFit.contain,
+                              child: Switch(
+                                key: ValueKey('account_closed_$index'),
+                                value: draft.isClosed,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                onChanged: saving
+                                    ? null
+                                    : (v) => setState(() => draft.isClosed = v),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (removable) ...[
+                    const SizedBox(width: 4),
+                    IconButton(
+                      key: ValueKey('remove_account_$index'),
+                      tooltip: 'حذف الحساب',
+                      onPressed: saving ? null : () => removeDraft(index),
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints(
+                        minWidth: 28,
+                        minHeight: 28,
+                      ),
+                      padding: EdgeInsets.zero,
+                      icon: Icon(
+                        Icons.close_rounded,
+                        size: 16,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          TextFormField(
+            key: index == 0
+                ? const ValueKey('account_name')
+                : ValueKey('account_name_$index'),
+            controller: draft.name,
             validator: (v) => v == null || v.trim().isEmpty
                 ? 'أدخلي البريد أو اسم الحساب'
                 : v.length > 254
@@ -373,70 +749,32 @@ class _AccountFormState extends State<AccountForm> {
             enabled: !saving,
             maxLength: 254,
             keyboardType: TextInputType.emailAddress,
-            textInputAction: TextInputAction.done,
-            onFieldSubmitted: (_) => save(),
-            decoration: const InputDecoration(
-              labelText: 'البريد الإلكتروني أو اسم الحساب',
-              hintText: 'example@email.com',
+            textInputAction: index == drafts.length - 1
+                ? TextInputAction.done
+                : TextInputAction.next,
+            onFieldSubmitted: (_) {
+              if (index == drafts.length - 1) save();
+            },
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(fontSize: 14),
+            decoration: InputDecoration(
+              isDense: true,
+              filled: true,
+              fillColor: scheme.surface,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 11,
+              ),
+              hintText: 'البريد الإلكتروني أو اسم الحساب',
               counterText: '',
-              prefixIcon: Icon(Icons.alternate_email_rounded),
-            ),
-          ),
-          const SizedBox(height: 12),
-          InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: saving ? null : () => setState(() => isClosed = !isClosed),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-              child: Row(
-                children: [
-                  Icon(
-                    isClosed ? Icons.lock_rounded : Icons.lock_open_rounded,
-                    size: 17,
-                    color: isClosed
-                        ? Theme.of(context).colorScheme.primary
-                        : Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'حساب مغلق',
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                              ),
-                        ),
-                        Text(
-                          'إيقاف إضافة طلبات جديدة لهذا الحساب',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                fontSize: 11,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Transform.scale(
-                    scale: 0.8,
-                    child: Switch(
-                      value: isClosed,
-                      onChanged: saving
-                          ? null
-                          : (v) => setState(() => isClosed = v),
-                    ),
-                  ),
-                ],
+              prefixIcon: const Icon(Icons.alternate_email_rounded, size: 18),
+              prefixIconConstraints: const BoxConstraints(
+                minWidth: 38,
+                minHeight: 38,
               ),
             ),
           ),
-          if (error != null) FormErrorText(error!),
         ],
       ),
     ),
@@ -575,16 +913,22 @@ Future<void> orderSheet(
   int accountId, {
   PurchaseOrder? order,
 }) async {
+  if (ModalRoute.of(context)?.isCurrent != true) return;
   if (order == null) {
-    final acc = await store.database.account(accountId);
-    if (acc != null && acc.isClosed) {
-      if (context.mounted) {
-        notice(context, 'الحساب مغلق؛ لا يمكن إضافة طلبات جديدة إليه');
+    try {
+      final account = await store.database.account(accountId);
+      if (account == null) throw StateError('الحساب لم يعد موجودًا');
+      if (account.isClosed) {
+        throw StateError('الحساب مغلق؛ لا يمكن إضافة طلبات جديدة إليه');
+      }
+    } catch (error) {
+      if (context.mounted && ModalRoute.of(context)?.isCurrent == true) {
+        notice(context, friendlyError(error));
       }
       return;
     }
   }
-  if (!context.mounted) return;
+  if (!context.mounted || ModalRoute.of(context)?.isCurrent != true) return;
   final saved = await openSheet<bool>(
     context,
     OrderForm(store: store, accountId: accountId, order: order),

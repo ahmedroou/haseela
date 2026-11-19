@@ -17,10 +17,11 @@ PurchaseOrder order(int id, int q, int buy, int sell, OrderStatus status) =>
     );
 
 void main() {
-  test('third-party percentages accept decimals up to and including 35%', () {
-    expect(ProfitShare.parseRate('٣٥٫٠٠'), 3500);
+  test('third-party percentages accept decimals up to and including 50%', () {
+    expect(ProfitShare.parseRate('٥٠٫٠٠'), 5000);
+    expect(ProfitShare.parseRate('٣٥٫٠١'), 3501);
     expect(ProfitShare.parseRate('۱۲٫۵'), 1250);
-    for (final input in ['', '0', '-1', '35.01', '12.345', 'NaN']) {
+    for (final input in ['', '0', '-1', '50.01', '12.345', 'NaN']) {
       expect(ProfitShare.parseRate(input), isNull);
     }
   });

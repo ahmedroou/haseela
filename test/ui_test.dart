@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -14,6 +15,19 @@ import 'package:haseela/store.dart';
 import 'package:haseela/finance.dart';
 import 'package:haseela/home.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+class _DelayedSaveStore extends AppStore {
+  _DelayedSaveStore(super.database);
+
+  final finishSave = Completer<void>();
+
+  @override
+  Future<T> mutate<T>(Future<T> Function() action) async {
+    final result = await super.mutate(action);
+    await finishSave.future;
+    return result;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -866,16 +880,16 @@ void main() {
       await tapVisible(find.text('تحديد حصة طرف ثالث'));
       await flush(tester);
       await tester.enterText(name, 'نور');
-      await tester.enterText(rate, '٣٥٫٠١');
+      await tester.enterText(rate, '٥٠٫٠١');
       await tapVisible(save);
       await tester.pumpAndSettle();
-      expect(find.text('أدخلي نسبة أكبر من صفر وحتى 35٪'), findsOneWidget);
+      expect(find.text('أدخلي نسبة أكبر من صفر وحتى 50٪'), findsOneWidget);
 
-      await tester.enterText(rate, '٣٥');
+      await tester.enterText(rate, '٥٠');
       await tapVisible(save);
       await flush(tester);
-      expect(store.report.expectedProfit, 48750);
-      final shown = find.text('حصة نور (35٪): 262.50 ريال · تعديل');
+      expect(store.report.expectedProfit, 37500);
+      final shown = find.text('حصة نور (50٪): 375 ريال · تعديل');
       expect(shown, findsOneWidget);
 
       await tapVisible(shown);
@@ -1084,4 +1098,282 @@ void main() {
       );
     });
   });
+
+  testWidgets(
+    'add multiple new accounts in compact cards and handle picker auto-selection',
+    (tester) async {
+      await tester.runAsync(() async {
+        await db.saveProduct('منتج س', 10000);
+        await store.load();
+      });
+      await launch(tester, size: const Size(320, 640), scale: 1.4);
+
+      await tester.tap(find.text('إضافة حساب').first);
+      await flush(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('account_name')),
+        'first@example.com',
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('add_another_account')),
+      );
+      await tester.tap(find.byKey(const ValueKey('add_another_account')));
+      await tester.pumpAndSettle();
+      expect(find.text('حساب 1'), findsOneWidget);
+      expect(find.text('حساب 2'), findsOneWidget);
+      expect(find.text('حفظ الحسابات (2)'), findsOneWidget);
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('add_another_account')),
+      );
+      await tester.tap(find.byKey(const ValueKey('add_another_account')));
+      await tester.pumpAndSettle();
+      expect(find.text('حفظ الحسابات (3)'), findsOneWidget);
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('remove_account_1')),
+      );
+      await tester.tap(find.byKey(const ValueKey('remove_account_1')));
+      await tester.pumpAndSettle();
+      expect(find.text('حفظ الحسابات (2)'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('account_name_1')),
+        'closed_batch@example.com',
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('account_closed_1')),
+      );
+      await tester.tap(find.byKey(const ValueKey('account_closed_1')));
+      await tester.pumpAndSettle();
+      tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      final firstName = find.byKey(const ValueKey('account_name'));
+      await tester.ensureVisible(firstName);
+      await tester.enterText(firstName, '');
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('add_another_account')),
+      );
+      await tester.pumpAndSettle();
+      expect(firstName.hitTestable(), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('save_form')));
+      await tester.pumpAndSettle();
+      expect(store.report.accounts, 0);
+      expect(firstName.hitTestable(), findsOneWidget);
+      expect(find.text('أدخلي البريد أو اسم الحساب'), findsOneWidget);
+      await tester.enterText(firstName, 'first@example.com');
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('save_form')));
+      await flush(tester);
+
+      expect(store.report.accounts, 2);
+      final homeScroll = find.byType(Scrollable).first;
+      await tester.scrollUntilVisible(
+        find.text('first@example.com'),
+        150,
+        scrollable: homeScroll,
+      );
+      expect(find.text('first@example.com'), findsOneWidget);
+      expect(find.text('closed_batch@example.com'), findsNothing);
+      final closed = (await tester.runAsync(
+        () => db.accounts(filter: AccountFilter.closed),
+      ))!;
+      expect(closed.single.name, 'closed_batch@example.com');
+
+      // Adding multiple accounts from AccountPicker refreshes and returns to picker;
+      // adding 1 open account selects it immediately for the order.
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('home_new_order')),
+        -150,
+        scrollable: homeScroll,
+      );
+      await tester.tap(find.byKey(const ValueKey('home_new_order')));
+      await flush(tester);
+      expect(find.byType(AccountPicker), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('add_account_from_picker')));
+      await flush(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('account_name')),
+        'picker_one@example.com',
+      );
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('add_another_account')),
+      );
+      await tester.tap(find.byKey(const ValueKey('add_another_account')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('account_name_1')),
+        'picker_two@example.com',
+      );
+      await tester.tap(find.byKey(const ValueKey('save_form')));
+      await flush(tester);
+      expect(find.byType(AccountPicker), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AccountPicker),
+          matching: find.text('picker_one@example.com'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(AccountPicker),
+          matching: find.text('picker_two@example.com'),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('add_account_from_picker')));
+      await flush(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('account_name')),
+        'single_auto@example.com',
+      );
+      await tester.tap(find.byKey(const ValueKey('save_form')));
+      await flush(tester);
+      expect(find.byType(OrderForm), findsOneWidget);
+
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    },
+  );
+
+  testWidgets('dismissing a saving order sheet does not pop the account page', (
+    tester,
+  ) async {
+    final delayedStore = _DelayedSaveStore(db);
+    await tester.runAsync(() async {
+      await db.saveAccount('حساب المتابعة');
+      await db.saveProduct('منتج أ', 10000);
+      await delayedStore.load();
+    });
+    store.dispose();
+    store = delayedStore;
+    await launch(tester);
+
+    await tester.tap(find.text('حساب المتابعة').hitTestable());
+    await flush(tester);
+    await tester.tap(find.widgetWithText(FloatingActionButton, 'إضافة طلب'));
+    await flush(tester);
+    await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
+    await flush(tester);
+    await tester.tap(find.text('منتج أ').hitTestable());
+    await flush(tester);
+    await tester.enterText(find.byKey(const ValueKey('order_purchase')), '60');
+    await tester.tap(find.byKey(const ValueKey('save_form')));
+    await tester.pump();
+    for (var attempt = 0; attempt < 50 && store.busy; attempt++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+    expect(store.report.orders, 1);
+    expect(store.busy, isFalse);
+
+    final sheet = tester.element(find.byType(OrderForm));
+    // The bottom sheet's drag dismissal uses Navigator.pop directly.
+    Navigator.of(sheet).pop();
+    delayedStore.finishSave.complete();
+    await flush(tester);
+
+    expect(find.byType(AccountPage), findsOneWidget);
+    expect(find.byType(OrderForm), findsNothing);
+    expect(find.text('منتج أ'), findsOneWidget);
+    expect(store.report.orders, 1);
+    await tester.pumpWidget(const SizedBox());
+    await flush(tester);
+  });
+
+  testWidgets(
+    'adding an order stays in AccountPage orders list when opened inside account, and returns to Home from Home',
+    (tester) async {
+      await tester.runAsync(() async {
+        await db.saveAccount('حساب المتابعة');
+        await db.saveProduct('منتج أ', 10000);
+        await store.load();
+      });
+      await launch(tester);
+
+      // 1) Open AccountPage from Home -> add order from inside AccountPage -> stay on AccountPage.
+      await tester.tap(find.text('حساب المتابعة').hitTestable());
+      await flush(tester);
+      expect(find.byType(AccountPage), findsOneWidget);
+      expect(find.text('تفاصيل الحساب'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'إضافة طلب'));
+      await flush(tester);
+      await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
+      await flush(tester);
+      await tester.tap(find.text('منتج أ').hitTestable());
+      await flush(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('order_purchase')),
+        '60',
+      );
+      await tester.ensureVisible(find.byKey(const ValueKey('save_form')));
+      await tester.tap(find.byKey(const ValueKey('save_form')));
+      await flush(tester);
+
+      expect(find.byType(AccountPage), findsOneWidget);
+      expect(find.text('تفاصيل الحساب'), findsOneWidget);
+      expect(find.text('منتج أ'), findsOneWidget);
+      expect(find.text('جاهزة لطلب جديد؟'), findsNothing);
+
+      // Add a second order using AccountPage FAB -> still stays on AccountPage.
+      await tester.tap(find.widgetWithText(FloatingActionButton, 'إضافة طلب'));
+      await flush(tester);
+      await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
+      await flush(tester);
+      await tester.tap(find.text('منتج أ').hitTestable());
+      await flush(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('order_purchase')),
+        '65',
+      );
+      await tester.ensureVisible(find.byKey(const ValueKey('save_form')));
+      await tester.tap(find.byKey(const ValueKey('save_form')));
+      await flush(tester);
+
+      expect(find.byType(AccountPage), findsOneWidget);
+      expect(
+        find.text('2 طلب · أُنشئ ${shortDate(store.recent.single.createdAt)}'),
+        findsOneWidget,
+      );
+
+      // Return to Home -> quickOrder -> stays on Home.
+      await tester.tap(find.byType(BackButton));
+      await flush(tester);
+      expect(find.byType(AccountPage), findsNothing);
+      expect(find.text('جاهزة لطلب جديد؟'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('home_new_order')));
+      await flush(tester);
+      await tester.tap(find.text('حساب المتابعة').hitTestable());
+      await flush(tester);
+      await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
+      await flush(tester);
+      await tester.tap(find.text('منتج أ').hitTestable());
+      await flush(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('order_purchase')),
+        '70',
+      );
+      await tester.ensureVisible(find.byKey(const ValueKey('save_form')));
+      await tester.tap(find.byKey(const ValueKey('save_form')));
+      await flush(tester);
+
+      expect(find.byType(AccountPage), findsNothing);
+      expect(find.text('جاهزة لطلب جديد؟'), findsOneWidget);
+      expect(store.report.orders, 3);
+
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    },
+  );
 }
