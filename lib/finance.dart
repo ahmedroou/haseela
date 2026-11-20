@@ -537,7 +537,7 @@ class RefundHistoryPage extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  '${store.report.cancelled} طلب ملغي · جميع الحسابات',
+                  'جميع الحسابات',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
@@ -550,7 +550,7 @@ class RefundHistoryPage extends StatelessWidget {
         ),
         empty: const EmptyState(
           title: 'لا توجد مبالغ لاستردادها',
-          subtitle: 'طلباتك الملغية ستظهر هنا مع مبلغ كل طلب.',
+          subtitle: 'تظهر هنا الطلبات الملغية التي لها أسعار.',
           icon: Icons.undo_rounded,
         ),
         item: (order) => Padding(

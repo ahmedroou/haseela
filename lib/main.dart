@@ -10,6 +10,7 @@ import 'screens.dart';
 import 'store.dart';
 import 'updates.dart';
 import 'home.dart';
+import 'period_archive.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -280,6 +281,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             ),
           ),
           actions: [
+            if (selected == 3)
+              IconButton(
+                key: const ValueKey('period_archives'),
+                tooltip: 'أرشيف الفترات',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => PeriodArchivesPage(store: widget.store),
+                  ),
+                ),
+                icon: const Icon(Icons.inventory_2_outlined, size: 22),
+              ),
             if (selected == 0)
               IconButton(
                 key: const ValueKey('closed_accounts'),

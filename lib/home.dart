@@ -216,12 +216,7 @@ class _AccountPickerState extends State<AccountPicker> {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: EdgeInsets.fromLTRB(
-      20,
-      0,
-      20,
-      16 + MediaQuery.viewInsetsOf(context).bottom,
-    ),
+    padding: EdgeInsets.fromLTRB(20, 0, 20, 16 + sheetBottomInset(context)),
     child: SizedBox(
       height:
           (MediaQuery.sizeOf(context).height * .62 -

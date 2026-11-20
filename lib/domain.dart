@@ -107,6 +107,11 @@ class Account {
   final bool isClosed;
   final int? closedAt;
   final int pieces, pending, arrived, cancelled;
+  static int compareByCreation(Account first, Account second) {
+    final dateOrder = first.createdAt.compareTo(second.createdAt);
+    return dateOrder == 0 ? first.id.compareTo(second.id) : dateOrder;
+  }
+
   bool get isEmail => RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(name);
   factory Account.fromMap(Map<String, Object?> m) => Account(
     id: m['id'] as int,
@@ -139,10 +144,12 @@ class OrderItem {
     required this.purchase,
     required this.sale,
     this.purchaseTotal,
+    this.unpriced = false,
   });
   final int? productId, purchaseTotal;
   final String productName;
   final int quantity, purchase, sale;
+  final bool unpriced;
   int get cost => purchaseTotal ?? quantity * purchase;
   int get revenue => quantity * sale;
 
@@ -152,6 +159,13 @@ class OrderItem {
     }
     if (quantity < 1 || quantity > maxQuantity) {
       throw const FormatException('الكمية غير صالحة');
+    }
+    if (unpriced &&
+        (productId != null ||
+            purchase != 0 ||
+            sale != 0 ||
+            purchaseTotal != null)) {
+      throw const FormatException('بيانات تسعير المنتج غير صالحة');
     }
     if (purchase < 0 ||
         sale < 0 ||
@@ -174,6 +188,7 @@ class OrderItem {
     purchase: m['purchase'] as int,
     sale: m['sale'] as int,
     purchaseTotal: m['purchase_total'] as int?,
+    unpriced: _readUnpriced(m['is_unpriced']),
   );
   Map<String, Object?> toMap() => {
     'product_id': productId,
@@ -182,8 +197,15 @@ class OrderItem {
     'purchase': purchase,
     'sale': sale,
     'purchase_total': purchaseTotal,
+    'is_unpriced': unpriced ? 1 : 0,
   };
 }
+
+bool _readUnpriced(Object? value) => switch (value) {
+  null || 0 => false,
+  1 => true,
+  _ => throw const FormatException('بيانات تسعير المنتج غير صالحة'),
+};
 
 class PurchaseOrder {
   const PurchaseOrder({
@@ -201,6 +223,7 @@ class PurchaseOrder {
     this.accountName,
     this.saleTotal,
     this.items = const [],
+    this.unpriced = false,
   });
   final int id, accountId;
   final int? productId;
@@ -210,6 +233,7 @@ class PurchaseOrder {
   final int? purchaseTotal;
   final int? saleTotal;
   final List<OrderItem> items;
+  final bool unpriced;
   final OrderStatus status;
   int get cost => purchaseTotal ?? quantity * purchase;
   bool get approximateUnit =>
@@ -228,6 +252,7 @@ class PurchaseOrder {
             purchase: purchase,
             sale: sale,
             purchaseTotal: purchaseTotal,
+            unpriced: unpriced,
           ),
         ]
       : items;
@@ -245,6 +270,7 @@ class PurchaseOrder {
     purchaseTotal: m['purchase_total'] as int?,
     accountName: m['account_name'] as String?,
     saleTotal: m['sale_total'] as int?,
+    unpriced: _readUnpriced(m['is_unpriced']),
     items: (m['items'] as List? ?? const [])
         .map(
           (item) => OrderItem.fromMap(Map<String, Object?>.from(item as Map)),
@@ -264,6 +290,7 @@ class PurchaseOrder {
     'updated_at': updatedAt,
     'purchase_total': purchaseTotal,
     'sale_total': saleTotal,
+    'is_unpriced': unpriced ? 1 : 0,
   };
   Map<String, Object?> toBackupMap() => {
     ...toMap(),
@@ -308,6 +335,65 @@ class ProfitShare {
     'created_at': createdAt,
     'updated_at': updatedAt,
   };
+}
+
+class PeriodReportItem {
+  const PeriodReportItem(this.name, this.quantity, this.amount);
+
+  final String name;
+  final int quantity;
+  final int? amount;
+}
+
+class PeriodReport {
+  PeriodReport(Iterable<PeriodReportItem> items)
+    : items = List.unmodifiable(items);
+
+  factory PeriodReport.fromOrders(Iterable<PurchaseOrder> orders) {
+    // Match SQLite NOCASE, which folds ASCII only, and keeps the smallest name.
+    final asciiUppercase = RegExp('[A-Z]');
+    final groups = <String, PeriodReportItem>{};
+    for (final order in orders) {
+      if (order.status == OrderStatus.cancelled) continue;
+      for (final item in order.lines) {
+        final key = item.productName.replaceAllMapped(
+          asciiUppercase,
+          (match) => match[0]!.toLowerCase(),
+        );
+        final prior = groups[key];
+        groups[key] = PeriodReportItem(
+          prior != null && prior.name.compareTo(item.productName) < 0
+              ? prior.name
+              : item.productName,
+          (prior?.quantity ?? 0) + item.quantity,
+          item.unpriced ? prior?.amount : (prior?.amount ?? 0) + item.revenue,
+        );
+      }
+    }
+    final keys = groups.keys.toList()..sort();
+    return PeriodReport(keys.map((key) => groups[key]!));
+  }
+
+  final List<PeriodReportItem> items;
+  int get quantity => items.fold(0, (total, item) => total + item.quantity);
+  int get amount => items.fold(0, (total, item) => total + (item.amount ?? 0));
+
+  String toCsv(String period) {
+    final formulaPrefix = RegExp(r'^[\r\n\t]|^\s*[=+\-@]');
+    String cell(String value) {
+      final escaped = (formulaPrefix.hasMatch(value) ? "'$value" : value)
+          .replaceAll('"', '""');
+      return '"$escaped"';
+    }
+
+    return [
+      '\uFEFF${cell('الفترة')},${cell(period)},',
+      '${cell('الصنف')},${cell('العدد')},${cell('المبلغ المطلوب (ريال)')}',
+      for (final item in items)
+        '${cell(item.name)},${item.quantity},${item.amount == null ? '' : moneyInput(item.amount!)}',
+      '${cell('الإجمالي')},$quantity,${moneyInput(amount)}',
+    ].join('\r\n');
+  }
 }
 
 class Report {
@@ -468,6 +554,47 @@ class SideCost {
   };
 }
 
+class PeriodArchiveInfo {
+  const PeriodArchiveInfo(this.id, this.name, this.range, this.closedAt);
+
+  final int id, closedAt;
+  final String name, range;
+
+  factory PeriodArchiveInfo.fromMap(Map<String, Object?> row) =>
+      PeriodArchiveInfo(
+        row['id'] as int,
+        row['name'] as String,
+        row['range_label'] as String,
+        row['closed_at'] as int,
+      );
+
+  Map<String, Object?> toMap() => {
+    'id': id,
+    'name': name,
+    'range_label': range,
+    'closed_at': closedAt,
+  };
+}
+
+class ArchivedPeriod {
+  const ArchivedPeriod(this.info, this.data);
+
+  final PeriodArchiveInfo info;
+  final BackupData data;
+
+  Report get report => Report.fromOrders(
+    data.orders,
+    accounts: data.accounts.length,
+    products: data.products.length,
+    receivedProfit: data.receipts.fold(
+      0,
+      (sum, receipt) => sum + receipt.amount,
+    ),
+    sideCosts: data.sideCosts.fold(0, (sum, cost) => sum + cost.amount),
+    profitShare: data.profitShare,
+  );
+}
+
 class BackupData {
   const BackupData({
     required this.products,
@@ -477,6 +604,7 @@ class BackupData {
     this.receipts = const [],
     this.sideCosts = const [],
     this.profitShare,
+    this.archives = const [],
   });
   final List<Product> products;
   final List<Account> accounts;
@@ -485,9 +613,15 @@ class BackupData {
   final List<ProfitReceipt> receipts;
   final List<SideCost> sideCosts;
   final ProfitShare? profitShare;
-  String encode() => const JsonEncoder.withIndent('  ').convert({
+  final List<ArchivedPeriod> archives;
+
+  String encode({bool compact = false}) =>
+      (compact ? const JsonEncoder() : const JsonEncoder.withIndent('  '))
+          .convert(_toMap());
+
+  Map<String, Object?> _toMap() => {
     'app': 'haseela',
-    'version': 6,
+    'version': archives.isEmpty ? 7 : 8,
     'exported_at': DateTime.now().toUtc().toIso8601String(),
     'money_unit': 'halala',
     'theme': theme,
@@ -497,212 +631,257 @@ class BackupData {
     'receipts': receipts.map((r) => r.toMap()).toList(),
     'side_costs': sideCosts.map((r) => r.toMap()).toList(),
     'profit_share': profitShare?.toMap(),
-  });
+    if (archives.isNotEmpty)
+      'archives': [
+        for (final archive in archives)
+          {...archive.info.toMap(), 'data': archive.data._toMap()},
+      ],
+  };
+
   static BackupData decode(String text) {
     try {
-      final root = jsonDecode(text);
-      if (root is! Map<String, dynamic> ||
-          root['app'] != 'haseela' ||
-          ![1, 2, 3, 4, 5, 6].contains(root['version']) ||
-          root['money_unit'] != 'halala' ||
-          !['system', 'light', 'dark'].contains(root['theme'])) {
-        throw const FormatException('ملف النسخة غير مدعوم');
-      }
-      List<Map<String, Object?>> rows(String key) {
-        final v = root[key];
-        if (v is! List) throw const FormatException('بيانات ناقصة');
-        return v.map((e) => Map<String, Object?>.from(e as Map)).toList();
-      }
-
-      void validBase(Map<String, Object?> r) {
-        final id = r['id'], c = r['created_at'], u = r['updated_at'];
-        if (id is! int ||
-            id <= 0 ||
-            id > 2147483647 ||
-            c is! int ||
-            u is! int ||
-            c <= 0 ||
-            u < c ||
-            u > 8640000000000000) {
-          throw const FormatException('معرّف أو تاريخ غير صالح');
-        }
-      }
-
-      void name(Object? v, {int limit = 120}) {
-        if (v is! String || v.trim().isEmpty || v.length > limit) {
-          throw const FormatException('اسم غير صالح');
-        }
-      }
-
-      void price(Object? v) {
-        if (v is! int || v < 0 || v > maxMoney) {
-          throw const FormatException('سعر غير صالح');
-        }
-      }
-
-      final pr = rows('products'), ar = rows('accounts'), or = rows('orders');
-      final version = (root['version'] as num).toInt();
-      final rr = version == 1 ? <Map<String, Object?>>[] : rows('receipts');
-      final sr = version < 4 ? <Map<String, Object?>>[] : rows('side_costs');
-      ProfitShare? profitShare;
-      if (version >= 5) {
-        if (!root.containsKey('profit_share')) {
-          throw const FormatException('بيانات حصة الطرف الثالث ناقصة');
-        }
-        final saved = root['profit_share'];
-        if (saved != null) {
-          final row = Map<String, Object?>.from(saved as Map);
-          validBase({...row, 'id': 1});
-          name(row['name']);
-          final rate = row['rate'];
-          if (rate is! int || !ProfitShare.validRate(rate)) {
-            throw const FormatException('نسبة الطرف الثالث غير صالحة');
-          }
-          profitShare = ProfitShare.fromMap(row);
-        }
-      }
-      final receiptIds = <int>{};
-      var receivedTotal = 0;
-      for (final r in rr) {
-        validBase(r);
-        name(r['note']);
-        price(r['amount']);
-        receivedTotal += r['amount'] as int;
-        if ((r['amount'] as int) == 0 ||
-            !receiptIds.add(r['id'] as int) ||
-            receivedTotal > maxMoney) {
-          throw const FormatException('سجل أرباح مستلمة غير صالح');
-        }
-      }
-      final sideCostIds = <int>{};
-      var totalCost = 0;
-      for (final r in sr) {
-        validBase(r);
-        price(r['amount']);
-        final note = r['note'];
-        totalCost += r['amount'] as int;
-        if (note is! String ||
-            note.length > 120 ||
-            (r['amount'] as int) == 0 ||
-            !sideCostIds.add(r['id'] as int) ||
-            totalCost > maxMoney) {
-          throw const FormatException('سجل تكاليف جانبية غير صالح');
-        }
-      }
-      for (final r in pr) {
-        validBase(r);
-        name(r['name']);
-        price(r['sale']);
-        if (r['last_purchase'] != null) price(r['last_purchase']);
-      }
-      for (final r in ar) {
-        validBase(r);
-        name(r['name'], limit: 254);
-        if (r['is_closed'] != null &&
-            ![0, 1, false, true].contains(r['is_closed'])) {
-          throw const FormatException('حالة الحساب غير صالحة');
-        }
-        final closed = r['is_closed'] == 1 || r['is_closed'] == true;
-        // Older backups did not record the closing time. Their last change is
-        // the best available estimate, as in the database migration.
-        if (version < 3) {
-          r['closed_at'] = closed ? r['updated_at'] : null;
-        }
-        final closedAt = r['closed_at'];
-        if (closed
-            ? closedAt is! int ||
-                  closedAt < (r['created_at'] as int) ||
-                  closedAt > (r['updated_at'] as int)
-            : closedAt != null) {
-          throw const FormatException('تاريخ إغلاق الحساب غير صالح');
-        }
-      }
-      final products = pr.map(Product.fromMap).toList();
-      final accounts = ar.map(Account.fromMap).toList();
-      final pids = products.map((p) => p.id).toSet(),
-          aids = accounts.map((a) => a.id).toSet();
-      if (pids.length != products.length || aids.length != accounts.length) {
-        throw const FormatException('معرّفات مكررة');
-      }
-      var totalSales = 0;
-      final orderIds = <int>{};
-      for (final r in or) {
-        if (version < 6) {
-          r.remove('items');
-          r.remove('sale_total');
-        }
-        validBase(r);
-        name(r['product_name']);
-        price(r['sale']);
-        price(r['purchase']);
-        final q = r['quantity'], pid = r['product_id'];
-        if (q is! int ||
-            q < 1 ||
-            q > maxQuantity ||
-            r['account_id'] is! int ||
-            !aids.contains(r['account_id']) ||
-            (pid != null && (pid is! int || !pids.contains(pid))) ||
-            !OrderStatus.values.map((s) => s.name).contains(r['status']) ||
-            !orderIds.add(r['id'] as int)) {
-          throw const FormatException('طلب أو علاقة غير صالحة');
-        }
-        if (r['purchase_total'] != null) {
-          price(r['purchase_total']);
-          if (unitFromTotal(r['purchase_total'] as int, q) != r['purchase']) {
-            throw const FormatException('سعر الوحدة لا يطابق إجمالي الشراء');
-          }
-        }
-        if (version >= 6) {
-          if (r['items'] is! List) {
-            throw const FormatException('تفاصيل منتجات الطلب ناقصة');
-          }
-          final order = PurchaseOrder.fromMap(r);
-          if (order.items.isEmpty) {
-            if (order.saleTotal != null) {
-              throw const FormatException('إجمالي بيع الطلب غير صالح');
-            }
-          } else {
-            var quantity = 0, cost = 0, revenue = 0;
-            for (final item in order.items) {
-              item.validate();
-              if (item.productId != null && !pids.contains(item.productId)) {
-                throw const FormatException('منتج الطلب غير موجود');
-              }
-              quantity += item.quantity;
-              cost += item.cost;
-              revenue += item.revenue;
-            }
-            if (order.items.length < 2 ||
-                quantity != order.quantity ||
-                cost != order.purchaseTotal ||
-                revenue != order.saleTotal ||
-                order.productId != null ||
-                order.productName != order.items.first.productName ||
-                unitFromTotal(revenue, quantity) != order.sale) {
-              throw const FormatException('إجماليات الطلب لا تطابق منتجاته');
-            }
-          }
-        }
-        totalCost +=
-            (r['purchase_total'] as int?) ?? q * (r['purchase'] as int);
-        totalSales += (r['sale_total'] as int?) ?? q * (r['sale'] as int);
-        if (totalCost > maxMoney || totalSales > maxMoney) {
-          throw const FormatException('الإجماليات أكبر من النطاق الآمن');
-        }
-      }
-      return BackupData(
-        products: products,
-        accounts: accounts,
-        orders: or.map(PurchaseOrder.fromMap).toList(),
-        theme: root['theme'] as String,
-        receipts: rr.map(ProfitReceipt.fromMap).toList(),
-        sideCosts: sr.map(SideCost.fromMap).toList(),
-        profitShare: profitShare,
-      );
+      return _decode(jsonDecode(text));
     } on FormatException {
       rethrow;
     } catch (_) {
       throw const FormatException('ملف النسخة تالف أو غير صالح');
     }
+  }
+
+  static BackupData _decode(Object? root, {bool allowArchives = true}) {
+    if (root is! Map<String, dynamic> ||
+        root['app'] != 'haseela' ||
+        ![
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          if (allowArchives) 8,
+        ].contains(root['version']) ||
+        root['money_unit'] != 'halala' ||
+        !['system', 'light', 'dark'].contains(root['theme'])) {
+      throw const FormatException('ملف النسخة غير مدعوم');
+    }
+    List<Map<String, Object?>> rows(String key) {
+      final v = root[key];
+      if (v is! List) throw const FormatException('بيانات ناقصة');
+      return v.map((e) => Map<String, Object?>.from(e as Map)).toList();
+    }
+
+    void validBase(Map<String, Object?> r) {
+      final id = r['id'], c = r['created_at'], u = r['updated_at'];
+      if (id is! int ||
+          id <= 0 ||
+          id > 2147483647 ||
+          c is! int ||
+          u is! int ||
+          c <= 0 ||
+          u < c ||
+          u > 8640000000000000) {
+        throw const FormatException('معرّف أو تاريخ غير صالح');
+      }
+    }
+
+    void name(Object? v, {int limit = 120}) {
+      if (v is! String || v.trim().isEmpty || v.length > limit) {
+        throw const FormatException('اسم غير صالح');
+      }
+    }
+
+    void price(Object? v) {
+      if (v is! int || v < 0 || v > maxMoney) {
+        throw const FormatException('سعر غير صالح');
+      }
+    }
+
+    final pr = rows('products'), ar = rows('accounts'), or = rows('orders');
+    final version = (root['version'] as num).toInt();
+    final rr = version == 1 ? <Map<String, Object?>>[] : rows('receipts');
+    final sr = version < 4 ? <Map<String, Object?>>[] : rows('side_costs');
+    ProfitShare? profitShare;
+    if (version >= 5) {
+      if (!root.containsKey('profit_share')) {
+        throw const FormatException('بيانات حصة الطرف الثالث ناقصة');
+      }
+      final saved = root['profit_share'];
+      if (saved != null) {
+        final row = Map<String, Object?>.from(saved as Map);
+        validBase({...row, 'id': 1});
+        name(row['name']);
+        final rate = row['rate'];
+        if (rate is! int || !ProfitShare.validRate(rate)) {
+          throw const FormatException('نسبة الطرف الثالث غير صالحة');
+        }
+        profitShare = ProfitShare.fromMap(row);
+      }
+    }
+    final receiptIds = <int>{};
+    var receivedTotal = 0;
+    for (final r in rr) {
+      validBase(r);
+      name(r['note']);
+      price(r['amount']);
+      receivedTotal += r['amount'] as int;
+      if ((r['amount'] as int) == 0 ||
+          !receiptIds.add(r['id'] as int) ||
+          receivedTotal > maxMoney) {
+        throw const FormatException('سجل أرباح مستلمة غير صالح');
+      }
+    }
+    final sideCostIds = <int>{};
+    var totalCost = 0;
+    for (final r in sr) {
+      validBase(r);
+      price(r['amount']);
+      final note = r['note'];
+      totalCost += r['amount'] as int;
+      if (note is! String ||
+          note.length > 120 ||
+          (r['amount'] as int) == 0 ||
+          !sideCostIds.add(r['id'] as int) ||
+          totalCost > maxMoney) {
+        throw const FormatException('سجل تكاليف جانبية غير صالح');
+      }
+    }
+    for (final r in pr) {
+      validBase(r);
+      name(r['name']);
+      price(r['sale']);
+      if (r['last_purchase'] != null) price(r['last_purchase']);
+    }
+    for (final r in ar) {
+      validBase(r);
+      name(r['name'], limit: 254);
+      if (r['is_closed'] != null &&
+          ![0, 1, false, true].contains(r['is_closed'])) {
+        throw const FormatException('حالة الحساب غير صالحة');
+      }
+      final closed = r['is_closed'] == 1 || r['is_closed'] == true;
+      // Older backups did not record the closing time. Their last change is
+      // the best available estimate, as in the database migration.
+      if (version < 3) {
+        r['closed_at'] = closed ? r['updated_at'] : null;
+      }
+      final closedAt = r['closed_at'];
+      if (closed
+          ? closedAt is! int ||
+                closedAt < (r['created_at'] as int) ||
+                closedAt > (r['updated_at'] as int)
+          : closedAt != null) {
+        throw const FormatException('تاريخ إغلاق الحساب غير صالح');
+      }
+    }
+    final products = pr.map(Product.fromMap).toList();
+    final accounts = ar.map(Account.fromMap).toList();
+    final pids = products.map((p) => p.id).toSet(),
+        aids = accounts.map((a) => a.id).toSet();
+    if (pids.length != products.length || aids.length != accounts.length) {
+      throw const FormatException('معرّفات مكررة');
+    }
+    var totalSales = 0;
+    final orderIds = <int>{};
+    for (final r in or) {
+      if (version < 7) r.remove('is_unpriced');
+      if (version < 6) {
+        r.remove('items');
+        r.remove('sale_total');
+      }
+      validBase(r);
+      name(r['product_name']);
+      price(r['sale']);
+      price(r['purchase']);
+      final q = r['quantity'], pid = r['product_id'];
+      if (q is! int ||
+          q < 1 ||
+          q > maxQuantity ||
+          r['account_id'] is! int ||
+          !aids.contains(r['account_id']) ||
+          (pid != null && (pid is! int || !pids.contains(pid))) ||
+          !OrderStatus.values.map((s) => s.name).contains(r['status']) ||
+          !orderIds.add(r['id'] as int)) {
+        throw const FormatException('طلب أو علاقة غير صالحة');
+      }
+      if (r['purchase_total'] != null) {
+        price(r['purchase_total']);
+        if (unitFromTotal(r['purchase_total'] as int, q) != r['purchase']) {
+          throw const FormatException('سعر الوحدة لا يطابق إجمالي الشراء');
+        }
+      }
+      if (version >= 6) {
+        if (r['items'] is! List) {
+          throw const FormatException('تفاصيل منتجات الطلب ناقصة');
+        }
+        final order = PurchaseOrder.fromMap(r);
+        if (order.items.isEmpty) {
+          order.lines.single.validate();
+          if (order.saleTotal != null) {
+            throw const FormatException('إجمالي بيع الطلب غير صالح');
+          }
+        } else {
+          var quantity = 0, cost = 0, revenue = 0;
+          for (final item in order.items) {
+            item.validate();
+            if (item.productId != null && !pids.contains(item.productId)) {
+              throw const FormatException('منتج الطلب غير موجود');
+            }
+            quantity += item.quantity;
+            cost += item.cost;
+            revenue += item.revenue;
+          }
+          if (order.items.length < 2 ||
+              order.unpriced != order.items.every((item) => item.unpriced) ||
+              quantity != order.quantity ||
+              cost != order.purchaseTotal ||
+              revenue != order.saleTotal ||
+              order.productId != null ||
+              order.productName != order.items.first.productName ||
+              unitFromTotal(revenue, quantity) != order.sale) {
+            throw const FormatException('إجماليات الطلب لا تطابق منتجاته');
+          }
+        }
+      }
+      totalCost += (r['purchase_total'] as int?) ?? q * (r['purchase'] as int);
+      totalSales += (r['sale_total'] as int?) ?? q * (r['sale'] as int);
+      if (totalCost > maxMoney || totalSales > maxMoney) {
+        throw const FormatException('الإجماليات أكبر من النطاق الآمن');
+      }
+    }
+    final archives = <ArchivedPeriod>[];
+    if (version >= 8) {
+      final ids = <int>{};
+      for (final row in rows('archives')) {
+        final info = PeriodArchiveInfo.fromMap(row);
+        validBase({
+          'id': info.id,
+          'created_at': info.closedAt,
+          'updated_at': info.closedAt,
+        });
+        name(info.name, limit: 300);
+        name(info.range, limit: 300);
+        if (!ids.add(info.id)) {
+          throw const FormatException('معرّفات مكررة في أرشيف الفترات');
+        }
+        final data = _decode(row['data'], allowArchives: false);
+        if (data.orders.any((row) => !orderIds.add(row.id)) ||
+            data.receipts.any((row) => !receiptIds.add(row.id)) ||
+            data.sideCosts.any((row) => !sideCostIds.add(row.id))) {
+          throw const FormatException('توجد سجلات مكررة بين الفترات');
+        }
+        archives.add(ArchivedPeriod(info, data));
+      }
+    }
+    return BackupData(
+      products: products,
+      accounts: accounts,
+      orders: or.map(PurchaseOrder.fromMap).toList(),
+      theme: root['theme'] as String,
+      receipts: rr.map(ProfitReceipt.fromMap).toList(),
+      sideCosts: sr.map(SideCost.fromMap).toList(),
+      profitShare: profitShare,
+      archives: archives,
+    );
   }
 }

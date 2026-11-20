@@ -109,6 +109,12 @@ void main() {
     );
   }
 
+  Future<void> confirmProducts(WidgetTester tester) async {
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('confirm_picker_products')));
+    await flush(tester);
+  }
+
   Future<void> launch(
     WidgetTester tester, {
     Size size = const Size(390, 844),
@@ -400,7 +406,7 @@ void main() {
       await tester.tap(find.text('اختاري من قائمة المنتجات'));
       await flush(tester);
       await tester.tap(find.text('سماعة روز').hitTestable());
-      await flush(tester);
+      await confirmProducts(tester);
       expect(
         tester
             .widget<TextFormField>(find.byKey(const ValueKey('order_sale')))
@@ -532,7 +538,7 @@ void main() {
       expect(find.text(starterProductNames.last), findsOneWidget);
       await screenshot(tester, 'product-picker');
       await tester.tap(find.text(starterProductNames.first));
-      await flush(tester);
+      await confirmProducts(tester);
       expect(
         tester
             .widget<TextFormField>(find.byKey(const ValueKey('order_sale')))
@@ -673,7 +679,7 @@ void main() {
       await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
       await flush(tester);
       await tester.tap(find.text(starterProductNames.first).hitTestable());
-      await flush(tester);
+      await confirmProducts(tester);
       expect(
         tester
             .widget<TextFormField>(find.byKey(const ValueKey('order_purchase')))
@@ -713,7 +719,7 @@ void main() {
       await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
       await flush(tester);
       await tester.tap(find.text(starterProductNames.first).hitTestable());
-      await flush(tester);
+      await confirmProducts(tester);
       expect(
         tester
             .widget<TextFormField>(find.byKey(const ValueKey('order_purchase')))
@@ -918,6 +924,266 @@ void main() {
     },
   );
 
+  testWidgets(
+    'period report opens from Reports and filters by date or accounts',
+    (tester) async {
+      await tester.runAsync(() async {
+        await seed();
+        final legacy = await db.saveAccount('حساب قديم');
+        final order = await db.saveOrder(
+          accountId: legacy,
+          productId: null,
+          productName: 'صنف قبل 2020',
+          quantity: 1,
+          purchase: 300,
+          sale: 500,
+          status: OrderStatus.arrived,
+        );
+        final date = DateTime(2017, 11, 20).millisecondsSinceEpoch;
+        for (final (table, id) in [('accounts', legacy), ('orders', order)]) {
+          await db.db.update(
+            table,
+            {'created_at': date},
+            where: 'id = ?',
+            whereArgs: [id],
+          );
+        }
+        await store.load();
+      });
+      await launch(tester, size: const Size(320, 640), scale: 1.4);
+      await tester.tap(find.text('التقارير').hitTestable());
+      await flush(tester);
+      await tester.tap(find.byKey(const ValueKey('open_period_report')));
+      await flush(tester);
+      expect(find.text('تقرير الفترة'), findsOneWidget);
+      final start = find.byKey(const ValueKey('period_start'));
+      final end = find.byKey(const ValueKey('period_end'));
+      final generate = find.byKey(const ValueKey('generate_period_report'));
+      final total = find.descendant(
+        of: find.byKey(const ValueKey('period_report_panel')),
+        matching: find.widgetWithText(MoneyLine, '2,450'),
+      );
+
+      await tester.tap(start);
+      await tester.pumpAndSettle();
+      final dialog = find.byType(DatePickerDialog);
+      final locale = MaterialLocalizations.of(tester.element(dialog));
+      await tester.tap(find.byTooltip(locale.inputDateModeButtonLabel));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.descendant(of: dialog, matching: find.byType(TextFormField)),
+        locale.formatCompactDate(DateTime.now()),
+      );
+      await tester.tap(
+        find.descendant(of: dialog, matching: find.text(locale.okButtonLabel)),
+      );
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+      await tester.tap(generate);
+      await flush(tester);
+      expect(find.text('AirPods Pro'), findsOneWidget);
+      expect(find.text('حقيبة ليلك'), findsOneWidget);
+      expect(find.text('ساعة روز'), findsNothing);
+      expect(total, findsOneWidget);
+      expect(find.byKey(const ValueKey('save_period_csv')), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(ActionChip, 'الكل'));
+      await tester.pumpAndSettle();
+      await tester.tap(generate);
+      await flush(tester);
+      expect(find.text('كامل السجل الحالي'), findsOneWidget);
+      expect(find.text('صنف قبل 2020'), findsOneWidget);
+
+      await tester.tap(find.text('بالحسابات'));
+      await tester.pumpAndSettle();
+      await tester.tap(generate);
+      await tester.pumpAndSettle();
+      expect(find.text('اختاري حساب البداية وحساب النهاية'), findsOneWidget);
+      expect(find.text('AirPods Pro'), findsNothing);
+      await tester.tap(start);
+      await flush(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('period_account_search')),
+        'أمازون',
+      );
+      await flush(tester);
+      await tester.tap(find.text('دفعة أمازون').hitTestable());
+      await tester.pumpAndSettle();
+      await tester.tap(end);
+      await flush(tester);
+      await tester.tap(find.text('طلبات سبتمبر').hitTestable());
+      await tester.pumpAndSettle();
+      await tester.tap(generate);
+      await flush(tester);
+      expect(find.text('من طلبات سبتمبر إلى دفعة أمازون'), findsOneWidget);
+      expect(find.text('AirPods Pro'), findsOneWidget);
+      expect(total, findsOneWidget);
+
+      const reportSharing = MethodChannel('haseela/reports');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      MethodCall? shareCall;
+      messenger.setMockMethodCallHandler(reportSharing, (call) async {
+        shareCall = call;
+        return null;
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(reportSharing, null),
+      );
+      final savePdf = find.byKey(const ValueKey('save_period_pdf'));
+      final sharePdf = find.byKey(const ValueKey('share_period_pdf'));
+      expect(savePdf, findsOneWidget);
+      await tester.ensureVisible(sharePdf);
+      await tester.pumpAndSettle();
+      expect(sharePdf.hitTestable(), findsOneWidget);
+      await tester.tap(sharePdf);
+      await flush(tester);
+      expect(shareCall?.method, 'sharePdf');
+      final arguments = shareCall!.arguments as Map;
+      expect(arguments['name'], endsWith('.pdf'));
+      final pdf = arguments['bytes'] as Uint8List;
+      expect(String.fromCharCodes(pdf.take(5)), '%PDF-');
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.byTooltip('إغلاق تقرير الفترة'));
+      await tester.pumpAndSettle();
+      expect(find.text('تقرير الفترة'), findsNothing);
+      expect(find.byKey(const ValueKey('open_period_report')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    },
+  );
+
+  testWidgets('a period can be closed, inspected and restored from Reports', (
+    tester,
+  ) async {
+    await tester.runAsync(seed);
+    await launch(tester, size: const Size(320, 640), scale: 1.4);
+    await tester.tap(find.text('التقارير').hitTestable());
+    await flush(tester);
+    await tester.tap(find.byKey(const ValueKey('period_archives')));
+    await flush(tester);
+    await tester.tap(find.byKey(const ValueKey('close_period')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('period_close_mode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('حتى تاريخ').hitTestable());
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('period_close_boundary')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('period_archive_name')),
+      'الفترة الأولى',
+    );
+    final save = find.byKey(const ValueKey('save_form'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await flush(tester);
+    expect(store.report.accounts, 0);
+    expect(store.report.orders, 0);
+    expect(find.text('تم إنهاء الفترة وحفظها في الأرشيف'), findsOneWidget);
+    await tester.tap(find.text('الفترة الأولى').hitTestable());
+    await flush(tester);
+    expect(find.text('تم إنهاء الفترة وحفظها في الأرشيف'), findsNothing);
+    final report = find.byKey(const ValueKey('archived_period_report'));
+    await tester.ensureVisible(report);
+    await tester.tap(report);
+    await flush(tester);
+    expect(find.text('AirPods Pro'), findsOneWidget);
+    expect(find.text('ساعة روز'), findsNothing);
+    expect(find.byKey(const ValueKey('save_period_pdf')), findsOneWidget);
+    await tester.tap(find.byTooltip('إغلاق تقرير الفترة'));
+    await tester.pumpAndSettle();
+
+    final restore = find.byKey(const ValueKey('restore_period'));
+    await tester.scrollUntilVisible(restore, 180);
+    await tester.tap(restore);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'استعادة'));
+    await flush(tester);
+    expect(store.report.accounts, 2);
+    expect(store.report.orders, 3);
+    expect(find.text('لا توجد فترات محفوظة'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await flush(tester);
+  });
+
+  testWidgets(
+    'manual order products save with or without prices without creating catalog entries',
+    (tester) async {
+      final accountId = (await tester.runAsync(() async {
+        final id = await db.saveAccount('حساب الطلبات');
+        await store.load();
+        return id;
+      }))!;
+      await launch(tester, size: const Size(320, 640), scale: 1.4);
+
+      await tester.tap(find.text('الحسابات').hitTestable());
+      await flush(tester);
+      await tester.tap(find.text('حساب الطلبات').hitTestable());
+      await flush(tester);
+      await tester.tap(find.widgetWithText(FloatingActionButton, 'إضافة طلب'));
+      await flush(tester);
+      final manual = find.byKey(const ValueKey('order_add_manual_product'));
+      final name = find.byKey(const ValueKey('order_manual_name'));
+      final prices = find.byKey(const ValueKey('order_manual_prices'));
+      final save = find.byKey(const ValueKey('save_form'));
+      await tester.tap(manual);
+      await tester.pumpAndSettle();
+      expect(name, findsOneWidget);
+      expect(find.byKey(const ValueKey('order_purchase')), findsNothing);
+      await tester.tap(save);
+      await tester.pumpAndSettle();
+      expect(find.text('اكتبي الاسم أولًا'), findsOneWidget);
+      await tester.enterText(name, 'دفتر');
+      await tester.tap(save);
+      await flush(tester);
+      expect(store.report.orders, 1);
+      expect(store.report.pieces, 1);
+      expect(store.report.spent, 0);
+      expect(store.report.expectedSales, 0);
+      expect(store.report.products, 0);
+      final card = find.byType(OrderTile);
+      final title = find.descendant(of: card, matching: find.text('دفتر'));
+      expect(
+        find.descendant(of: card, matching: find.byType(MoneyLine)),
+        findsNothing,
+      );
+
+      await tester.ensureVisible(title);
+      await tester.pumpAndSettle();
+      await tester.tap(title);
+      await flush(tester);
+      expect(tester.widget<TextFormField>(name).controller!.text, 'دفتر');
+      expect(tester.widget<FilterChip>(prices).selected, isFalse);
+      await tester.tap(manual);
+      await tester.pumpAndSettle();
+      await tester.enterText(name, 'حقيبة');
+      await tester.ensureVisible(prices);
+      await tester.pumpAndSettle();
+      await tester.tap(prices);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('order_sale')), '30');
+      await tester.enterText(
+        find.byKey(const ValueKey('order_purchase')),
+        '20',
+      );
+      await tester.tap(save);
+      await flush(tester);
+
+      final order = (await tester.runAsync(() => db.orders(accountId)))!.single;
+      expect(order.items.map((item) => item.productName), ['دفتر', 'حقيبة']);
+      expect(order.items.map((item) => item.unpriced), [true, false]);
+      expect(order.items.every((item) => item.productId == null), isTrue);
+      expect(store.report.products, 0);
+      expect(store.report.spent, 2000);
+      expect(store.report.expectedProfit, 1000);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    },
+  );
+
   for (final separate in [false, true]) {
     testWidgets(
       'multiple products save ${separate ? 'separately' : 'together'} from an account',
@@ -940,7 +1206,7 @@ void main() {
         await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
         await flush(tester);
         await tester.tap(find.text('منتج أول').hitTestable());
-        await flush(tester);
+        await confirmProducts(tester);
         await tester.enterText(
           find.byKey(const ValueKey('order_quantity')),
           '٣',
@@ -953,7 +1219,7 @@ void main() {
         await tester.tap(find.byKey(const ValueKey('order_add_product')));
         await flush(tester);
         await tester.tap(find.text('منتج ثانٍ').hitTestable());
-        await flush(tester);
+        await confirmProducts(tester);
         await tester.ensureVisible(
           find.byKey(const ValueKey('order_quantity')),
         );
@@ -1069,6 +1335,87 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'order product selection survives search and clears Android bottom insets',
+    (tester) async {
+      await tester.runAsync(() async {
+        await db.saveAccount('حساب الاختيار');
+        await db.saveProduct('دفتر', 5000);
+        await db.saveProduct('قلم', 1101);
+        await store.load();
+      });
+      tester.view.viewPadding = const FakeViewPadding(bottom: 24);
+      tester.view.systemGestureInsets = const FakeViewPadding(bottom: 64);
+      addTearDown(tester.view.resetViewPadding);
+      addTearDown(tester.view.resetSystemGestureInsets);
+      addTearDown(tester.view.resetViewInsets);
+      await launch(tester, size: const Size(320, 640), scale: 1.4);
+      await tester.tap(find.byKey(const ValueKey('home_new_order')));
+      await flush(tester);
+      await tester.tap(find.text('حساب الاختيار').hitTestable());
+      await flush(tester);
+      final save = find.byKey(const ValueKey('save_form'));
+      expect(tester.getRect(save).bottom, lessThanOrEqualTo(640 - 64));
+      await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
+      await flush(tester);
+      final confirm = find.byKey(const ValueKey('confirm_picker_products'));
+      expect(tester.getRect(confirm).bottom, lessThanOrEqualTo(640 - 64));
+      expect(tester.widget<FilledButton>(confirm).onPressed, isNull);
+
+      final search = find.byKey(const ValueKey('product_picker_search'));
+      tester.view.viewInsets = const FakeViewPadding(bottom: 245);
+      await tester.enterText(search, 'دفتر');
+      await flush(tester);
+      await tester.tap(
+        find
+            .descendant(
+              of: find.widgetWithText(Pressable, 'دفتر'),
+              matching: find.text('دفتر'),
+            )
+            .hitTestable(),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('إضافة المحدد (1)'), findsOneWidget);
+      await tester.enterText(search, 'قلم');
+      await flush(tester);
+      await tester.tap(
+        find
+            .descendant(
+              of: find.widgetWithText(Pressable, 'قلم'),
+              matching: find.text('قلم'),
+            )
+            .hitTestable(),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('إضافة المحدد (2)'), findsOneWidget);
+      expect(tester.getRect(confirm).bottom, lessThanOrEqualTo(640 - 245));
+      await confirmProducts(tester);
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle();
+      expect(find.byType(ProductPicker), findsNothing);
+      expect(find.widgetWithText(InputChip, 'دفتر'), findsOneWidget);
+      expect(find.widgetWithText(InputChip, 'قلم'), findsOneWidget);
+      expect(tester.getRect(save).bottom, lessThanOrEqualTo(640 - 64));
+      final purchase = find.byKey(const ValueKey('order_purchase'));
+      await tester.ensureVisible(purchase);
+      await tester.enterText(purchase, '25');
+      final second = find.widgetWithText(InputChip, 'قلم');
+      await tester.ensureVisible(second);
+      await tester.tap(second);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(purchase);
+      await tester.enterText(purchase, '3');
+      await tester.tap(save);
+      await flush(tester);
+      expect(store.report.orders, 1);
+      expect(store.report.pieces, 2);
+      expect(store.report.spent, 2800);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await flush(tester);
+    },
+  );
 
   testWidgets('failed save preserves fields and shows actionable error', (
     tester,
@@ -1262,7 +1609,7 @@ void main() {
     await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
     await flush(tester);
     await tester.tap(find.text('منتج أ').hitTestable());
-    await flush(tester);
+    await confirmProducts(tester);
     await tester.enterText(find.byKey(const ValueKey('order_purchase')), '60');
     await tester.tap(find.byKey(const ValueKey('save_form')));
     await tester.pump();
@@ -1310,7 +1657,7 @@ void main() {
       await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
       await flush(tester);
       await tester.tap(find.text('منتج أ').hitTestable());
-      await flush(tester);
+      await confirmProducts(tester);
       await tester.enterText(
         find.byKey(const ValueKey('order_purchase')),
         '60',
@@ -1330,7 +1677,7 @@ void main() {
       await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
       await flush(tester);
       await tester.tap(find.text('منتج أ').hitTestable());
-      await flush(tester);
+      await confirmProducts(tester);
       await tester.enterText(
         find.byKey(const ValueKey('order_purchase')),
         '65',
@@ -1358,7 +1705,7 @@ void main() {
       await tester.tap(find.text('اختاري من قائمة المنتجات').hitTestable());
       await flush(tester);
       await tester.tap(find.text('منتج أ').hitTestable());
-      await flush(tester);
+      await confirmProducts(tester);
       await tester.enterText(
         find.byKey(const ValueKey('order_purchase')),
         '70',

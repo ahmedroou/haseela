@@ -1,5 +1,6 @@
 package com.riham.haseela
 
+import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
@@ -10,7 +11,9 @@ import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.StandardMethodCodec
 import java.io.File
+import java.util.UUID
 
 class MainActivity : FlutterActivity() {
     private var pendingInstall: File? = null
@@ -18,6 +21,34 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
+        MethodChannel(
+            messenger,
+            "haseela/reports",
+            StandardMethodCodec.INSTANCE,
+            messenger.makeBackgroundTaskQueue()
+        )
+            .setMethodCallHandler { call, result ->
+                if (call.method != "sharePdf") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                try {
+                    val name = call.argument<String>("name") ?: error("Missing report name")
+                    val bytes = call.argument<ByteArray>("bytes") ?: error("Missing report data")
+                    val intent = reportShareIntent(name, bytes)
+                    runOnUiThread {
+                        try {
+                            startActivity(intent)
+                            result.success(null)
+                        } catch (_: Exception) {
+                            result.error("SHARE_ERROR", "تعذّرت مشاركة التقرير", null)
+                        }
+                    }
+                } catch (_: Exception) {
+                    result.error("SHARE_ERROR", "تعذّرت مشاركة التقرير", null)
+                }
+            }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "haseela/updates")
             .setMethodCallHandler { call, result ->
                 try {
@@ -51,6 +82,26 @@ class MainActivity : FlutterActivity() {
                     result.error("UPDATE_ERROR", "تعذّر تثبيت التحديث. ${e.message}", null)
                 }
             }
+    }
+
+    private fun reportShareIntent(name: String, bytes: ByteArray): Intent {
+        require(name.matches(Regex("haseela-report-\\d{4}-\\d{2}-\\d{2}\\.pdf")))
+        require(bytes.isNotEmpty())
+        val root = File(cacheDir, "report_shares")
+        val cutoff = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
+        root.listFiles()?.filter { it.lastModified() < cutoff }?.forEach { it.deleteRecursively() }
+        val directory = File(root, UUID.randomUUID().toString())
+        check(directory.mkdirs())
+        val file = File(directory, name)
+        file.writeBytes(bytes)
+        val uri = FileProvider.getUriForFile(this, "$packageName.updates", file)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newUri(contentResolver, name, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        return Intent.createChooser(send, "مشاركة تقرير الفترة")
     }
 
     @Suppress("DEPRECATION")

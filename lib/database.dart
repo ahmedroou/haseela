@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import 'domain.dart';
@@ -8,6 +11,8 @@ const starterProductNames = ['بيبي جوي كرتون رقم 4', 'بيبي ج
 class AppDatabase {
   AppDatabase._(this.db);
   final Database db;
+  static const _unpricedColumn =
+      'is_unpriced INTEGER NOT NULL DEFAULT 0 CHECK(is_unpriced IN (0,1))';
   static Future<AppDatabase> open({
     String? path,
     DatabaseFactory? factory,
@@ -17,7 +22,7 @@ class AppDatabase {
     final db = await f.openDatabase(
       location,
       options: OpenDatabaseOptions(
-        version: 10,
+        version: 12,
         onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
         onCreate: (db, version) async {
           await db.execute('''CREATE TABLE products (
@@ -39,6 +44,7 @@ class AppDatabase {
           purchase_total INTEGER CHECK(purchase_total IS NULL OR purchase_total >= 0),
           sale INTEGER NOT NULL CHECK(sale >= 0),
           sale_total INTEGER CHECK(sale_total IS NULL OR sale_total >= 0),
+          $_unpricedColumn,
           status TEXT NOT NULL CHECK(status IN ('pending','arrived','cancelled')),
           created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)''');
           await db.execute(
@@ -59,6 +65,7 @@ class AppDatabase {
           await _createReceipts(db);
           await _createSideCosts(db);
           await _createProfitShare(db);
+          await _createPeriodArchives(db);
           await _seedProducts(db);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
@@ -128,6 +135,17 @@ class AppDatabase {
           if (oldVersion >= 8 && oldVersion < 10) {
             await _migrateProfitShareMaxRate(db);
           }
+          if (oldVersion < 11) {
+            for (final table in ['orders', 'order_items']) {
+              final columns = await db.rawQuery('PRAGMA table_info($table)');
+              if (!columns.any((column) => column['name'] == 'is_unpriced')) {
+                await db.execute(
+                  'ALTER TABLE $table ADD COLUMN $_unpricedColumn',
+                );
+              }
+            }
+          }
+          if (oldVersion < 12) await _createPeriodArchives(db);
         },
         onDowngrade: (db, oldVersion, newVersion) async =>
             throw StateError('قاعدة البيانات من إصدار أحدث؛ حدّثي التطبيق'),
@@ -145,6 +163,7 @@ class AppDatabase {
       purchase INTEGER NOT NULL CHECK(purchase >= 0),
       sale INTEGER NOT NULL CHECK(sale >= 0),
       purchase_total INTEGER CHECK(purchase_total IS NULL OR purchase_total >= 0),
+      $_unpricedColumn,
       PRIMARY KEY(order_id, position))''');
     await db.execute(
       'CREATE INDEX IF NOT EXISTS order_item_product ON order_items(product_id)',
@@ -196,6 +215,16 @@ class AppDatabase {
       id INTEGER PRIMARY KEY CHECK(id = 1), name TEXT NOT NULL,
       rate INTEGER NOT NULL CHECK(rate BETWEEN 1 AND ${ProfitShare.maxRate}),
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)''');
+
+  static Future<void> _createPeriodArchives(DatabaseExecutor db) async {
+    await db.execute('''CREATE TABLE IF NOT EXISTS period_archives (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
+      range_label TEXT NOT NULL, closed_at INTEGER NOT NULL)''');
+    await db.execute('''CREATE TABLE IF NOT EXISTS period_archive_chunks (
+      archive_id INTEGER NOT NULL REFERENCES period_archives(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL, data BLOB NOT NULL,
+      PRIMARY KEY(archive_id, position))''');
+  }
 
   static Future<void> _migrateProfitShareMaxRate(DatabaseExecutor db) async {
     // SQLite embeds the old CHECK bound in the table DDL; rebuild the table to raise it.
@@ -446,6 +475,7 @@ class AppDatabase {
       'purchase_total': multiple ? cost : items.first.purchaseTotal,
       'sale': multiple ? unitFromTotal(revenue, quantity) : items.first.sale,
       'sale_total': multiple ? revenue : null,
+      'is_unpriced': items.every((item) => item.unpriced) ? 1 : 0,
       'status': status.name,
       'updated_at': now,
     };
@@ -633,6 +663,76 @@ class AppDatabase {
     );
   });
 
+  Future<PeriodReport> periodReportByDate(DateTime from, DateTime to) async {
+    final start = DateTime(from.year, from.month, from.day);
+    final end = DateTime(to.year, to.month, to.day + 1);
+    if (!start.isBefore(end)) {
+      throw const FormatException(
+        'اختاري تاريخ نهاية يوافق البداية أو يأتي بعدها',
+      );
+    }
+    return _periodReport(db, 'o.created_at >= ? AND o.created_at < ?', [
+      start.millisecondsSinceEpoch,
+      end.millisecondsSinceEpoch,
+    ]);
+  }
+
+  Future<PeriodReport> periodReportAll() => _periodReport(db, '1', const []);
+
+  Future<PeriodReport> periodReportByAccounts(int fromId, int toId) =>
+      db.transaction((tx) async {
+        final bounds = [
+          await _accountRow(tx, fromId),
+          await _accountRow(tx, toId),
+        ]..sort(Account.compareByCreation);
+        final first = bounds.first, last = bounds.last;
+        return _periodReport(
+          tx,
+          '''
+          (a.created_at > ? OR (a.created_at = ? AND a.id >= ?)) AND
+          (a.created_at < ? OR (a.created_at = ? AND a.id <= ?))''',
+          [
+            first.createdAt,
+            first.createdAt,
+            first.id,
+            last.createdAt,
+            last.createdAt,
+            last.id,
+          ],
+        );
+      });
+
+  static Future<PeriodReport> _periodReport(
+    DatabaseExecutor executor,
+    String condition,
+    List<Object> args,
+  ) async {
+    final rows = await executor.rawQuery('''
+      WITH selected_orders AS (
+        SELECT o.* FROM orders o JOIN accounts a ON a.id = o.account_id
+        WHERE o.status != 'cancelled' AND ($condition)
+      ), lines AS (
+        SELECT product_name, quantity, sale, is_unpriced
+        FROM selected_orders WHERE sale_total IS NULL
+        UNION ALL
+        SELECT i.product_name, i.quantity, i.sale, i.is_unpriced
+        FROM order_items i JOIN selected_orders o ON o.id = i.order_id
+      )
+      SELECT MIN(product_name) name, SUM(quantity) quantity,
+        SUM(CASE WHEN is_unpriced = 0 THEN quantity * sale END) amount
+      FROM lines GROUP BY product_name COLLATE NOCASE
+      ORDER BY name COLLATE NOCASE''', args);
+    return PeriodReport(
+      rows.map(
+        (row) => PeriodReportItem(
+          row['name'] as String,
+          row['quantity'] as int,
+          row['amount'] as int?,
+        ),
+      ),
+    );
+  }
+
   static Future<ProfitShare?> _profitShare(DatabaseExecutor tx) async {
     final rows = await tx.query('profit_share', limit: 1);
     return rows.isEmpty ? null : ProfitShare.fromMap(rows.single);
@@ -765,7 +865,7 @@ class AppDatabase {
       tx,
       await tx.rawQuery(
         '''SELECT o.*, a.name account_name FROM orders o
-    JOIN accounts a ON a.id = o.account_id WHERE o.status='cancelled'
+    JOIN accounts a ON a.id = o.account_id WHERE o.status='cancelled' AND o.is_unpriced=0
     ORDER BY o.created_at DESC, o.id DESC LIMIT ? OFFSET ?''',
         [limit, offset],
       ),
@@ -791,7 +891,13 @@ class AppDatabase {
     }, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  Future<BackupData> snapshot() => db.transaction((tx) async {
+  Future<BackupData> snapshot() =>
+      db.transaction((tx) => _snapshot(tx, includeArchives: true));
+
+  static Future<BackupData> _snapshot(
+    Transaction tx, {
+    bool includeArchives = false,
+  }) async {
     final settings = await tx.query(
       'settings',
       where: 'key = ?',
@@ -807,7 +913,228 @@ class AppDatabase {
       )).map(ProfitReceipt.fromMap).toList(),
       sideCosts: (await tx.query('side_costs')).map(SideCost.fromMap).toList(),
       profitShare: await _profitShare(tx),
+      archives: includeArchives
+          ? [
+              for (final info in await _archiveInfos(tx))
+                await _loadArchiveData(tx, info),
+            ]
+          : const [],
     );
+  }
+
+  Future<List<PeriodArchiveInfo>> periodArchives() => _archiveInfos(db);
+
+  static Future<List<PeriodArchiveInfo>> _archiveInfos(
+    DatabaseExecutor db,
+  ) async => (await db.query(
+    'period_archives',
+    orderBy: 'closed_at DESC, id DESC',
+  )).map(PeriodArchiveInfo.fromMap).toList();
+
+  Future<ArchivedPeriod> archivedPeriod(int id) =>
+      db.transaction((tx) => _loadArchive(tx, id));
+
+  static Future<ArchivedPeriod> _loadArchive(
+    DatabaseExecutor db,
+    int id,
+  ) async {
+    final rows = await db.query(
+      'period_archives',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    if (rows.isEmpty) throw StateError('الفترة لم تعد في الأرشيف');
+    return _loadArchiveData(db, PeriodArchiveInfo.fromMap(rows.single));
+  }
+
+  static Future<ArchivedPeriod> _loadArchiveData(
+    DatabaseExecutor db,
+    PeriodArchiveInfo info,
+  ) async {
+    final chunks = await db.query(
+      'period_archive_chunks',
+      columns: ['data'],
+      where: 'archive_id = ?',
+      whereArgs: [info.id],
+      orderBy: 'position',
+    );
+    final bytes = BytesBuilder(copy: false);
+    for (final row in chunks) {
+      bytes.add(row['data'] as Uint8List);
+    }
+    return ArchivedPeriod(
+      info,
+      BackupData.decode(utf8.decode(bytes.takeBytes())),
+    );
+  }
+
+  static void _insertArchiveData(Batch batch, int id, String content) {
+    // Keep each row well below Android SQLite's cursor window size.
+    const chunkSize = 128 * 1024;
+    final bytes = utf8.encode(content);
+    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+      batch.insert('period_archive_chunks', {
+        'archive_id': id,
+        'position': offset ~/ chunkSize,
+        'data': Uint8List.sublistView(
+          bytes,
+          offset,
+          math.min(offset + chunkSize, bytes.length),
+        ),
+      });
+    }
+  }
+
+  Future<int> closePeriod({
+    String name = '',
+    DateTime? throughDate,
+    int? throughAccountId,
+  }) async {
+    if (name.trim().isNotEmpty) _name(name.trim());
+    if (throughDate != null && throughAccountId != null) {
+      throw const FormatException('اختاري تاريخًا أو حسابًا لنهاية الفترة');
+    }
+    return db.transaction((tx) async {
+      final boundary = throughAccountId == null
+          ? null
+          : await _accountRow(tx, throughAccountId);
+      final cutoff = throughDate != null
+          ? DateTime(
+              throughDate.year,
+              throughDate.month,
+              throughDate.day + 1,
+            ).millisecondsSinceEpoch
+          : boundary == null
+          ? null
+          : boundary.createdAt + 1;
+      bool beforeEnd(int createdAt) => cutoff == null || createdAt < cutoff;
+      final range = throughDate != null
+          ? 'حتى ${DateTime(throughDate.year, throughDate.month, throughDate.day).toIso8601String().split('T').first}'
+          : boundary == null
+          ? 'كامل السجل'
+          : 'حتى حساب ${boundary.name}';
+
+      final active = await _snapshot(tx);
+      final eligibleAccounts = {
+        for (final account in active.accounts)
+          if (boundary == null
+              ? beforeEnd(account.createdAt)
+              : Account.compareByCreation(account, boundary) <= 0)
+            account.id,
+      };
+      final moving = <PurchaseOrder>[];
+      final remaining = <PurchaseOrder>[];
+      for (final order in active.orders) {
+        final eligible = boundary == null
+            ? beforeEnd(order.createdAt)
+            : eligibleAccounts.contains(order.accountId);
+        (eligible ? moving : remaining).add(order);
+      }
+      final remainingAccounts = remaining
+          .map((order) => order.accountId)
+          .toSet();
+      final removedAccounts = eligibleAccounts.difference(remainingAccounts);
+      final savedAccounts = {
+        ...removedAccounts,
+        ...moving.map((order) => order.accountId),
+      };
+      final remainingProducts = _orderProductIds(remaining);
+      final removedProducts = {
+        for (final product in active.products)
+          if (beforeEnd(product.createdAt) &&
+              !remainingProducts.contains(product.id))
+            product.id,
+      };
+      final savedProducts = {...removedProducts, ..._orderProductIds(moving)};
+      final receipts = active.receipts
+          .where((row) => beforeEnd(row.createdAt))
+          .toList();
+      final costs = active.sideCosts
+          .where((row) => beforeEnd(row.createdAt))
+          .toList();
+      final clearShare =
+          beforeEnd(active.profitShare?.createdAt ?? 0) &&
+          removedAccounts.length == active.accounts.length &&
+          remaining.isEmpty &&
+          receipts.length == active.receipts.length &&
+          costs.length == active.sideCosts.length;
+      if (savedAccounts.isEmpty &&
+          savedProducts.isEmpty &&
+          moving.isEmpty &&
+          receipts.isEmpty &&
+          costs.isEmpty &&
+          !(clearShare && active.profitShare != null)) {
+        throw StateError('لا توجد بيانات في الفترة المحددة');
+      }
+
+      final data = BackupData(
+        theme: active.theme,
+        accounts: active.accounts
+            .where((row) => savedAccounts.contains(row.id))
+            .toList(),
+        products: active.products
+            .where((row) => savedProducts.contains(row.id))
+            .toList(),
+        orders: moving,
+        receipts: receipts,
+        sideCosts: costs,
+        profitShare: active.profitShare,
+      );
+      final encoded = data.encode(compact: true);
+      // Validate the archive with the same reader used during restoration.
+      BackupData.decode(encoded);
+      final id = await tx.insert('period_archives', {
+        'name': name.trim().isEmpty ? range : name.trim(),
+        'range_label': range,
+        'closed_at': DateTime.now().millisecondsSinceEpoch,
+      });
+      final batch = tx.batch();
+      _insertArchiveData(batch, id, encoded);
+      _deleteByIds(batch, 'orders', moving.map((order) => order.id));
+      _deleteByIds(batch, 'accounts', removedAccounts);
+      _deleteByIds(batch, 'products', removedProducts);
+      _deleteByIds(batch, 'profit_receipts', receipts.map((row) => row.id));
+      _deleteByIds(batch, 'side_costs', costs.map((row) => row.id));
+      if (clearShare) batch.delete('profit_share');
+      await batch.commit(noResult: true);
+      return id;
+    });
+  }
+
+  static Set<int> _orderProductIds(Iterable<PurchaseOrder> orders) => {
+    for (final order in orders)
+      for (final line in order.lines) ?line.productId,
+  };
+
+  static void _deleteByIds(Batch batch, String table, Iterable<int> ids) {
+    final entries = ids.toList();
+    for (var start = 0; start < entries.length; start += 400) {
+      final group = entries.skip(start).take(400).toList();
+      batch.delete(
+        table,
+        where: 'id IN (${List.filled(group.length, '?').join(',')})',
+        whereArgs: group,
+      );
+    }
+  }
+
+  Future<void> restorePeriod(int id) => db.transaction((tx) async {
+    final archive = await _loadArchive(tx, id);
+    final batch = tx.batch();
+    _insertRecords(batch, archive.data, merge: true);
+    await batch.commit(noResult: true);
+    final totals = (await tx.rawQuery('''SELECT
+      COALESCE(SUM(COALESCE(purchase_total, quantity * purchase)), 0)
+        + (SELECT COALESCE(SUM(amount), 0) FROM side_costs) AS cost,
+      COALESCE(SUM(COALESCE(sale_total, quantity * sale)), 0) AS sales,
+      (SELECT COALESCE(SUM(amount), 0) FROM profit_receipts) AS receipts
+      FROM orders''')).single;
+    if (totals.values.any((amount) => (amount as int) > maxMoney)) {
+      throw const FormatException(
+        'إجمالي المبالغ بعد الاستعادة أكبر من النطاق الآمن',
+      );
+    }
+    await tx.delete('period_archives', where: 'id = ?', whereArgs: [id]);
   });
   Future<File> saveSafetyCopy() async {
     final backup = await snapshot();
@@ -845,38 +1172,95 @@ class AppDatabase {
       await tx.delete('orders');
       await tx.delete('products');
       await tx.delete('accounts');
+      await tx.delete('period_archives');
       final batch = tx.batch();
-      for (final p in verified.products) {
-        batch.insert('products', p.toMap());
-      }
-      for (final r in verified.receipts) {
-        batch.insert('profit_receipts', r.toMap());
-      }
-      for (final cost in verified.sideCosts) {
-        batch.insert('side_costs', cost.toMap());
-      }
-      final share = verified.profitShare;
-      if (share != null) {
-        batch.insert('profit_share', {'id': 1, ...share.toMap()});
-      }
-      for (final a in verified.accounts) {
-        batch.insert('accounts', a.toMap());
-      }
-      for (final o in verified.orders) {
-        batch.insert('orders', o.toMap());
-        for (var position = 0; position < o.items.length; position++) {
-          batch.insert('order_items', {
-            'order_id': o.id,
-            'position': position,
-            ...o.items[position].toMap(),
-          });
-        }
+      _insertRecords(batch, verified);
+      for (final archive in verified.archives) {
+        batch.insert('period_archives', archive.info.toMap());
+        _insertArchiveData(
+          batch,
+          archive.info.id,
+          archive.data.encode(compact: true),
+        );
       }
       batch.insert('settings', {
         'key': 'theme',
         'value': verified.theme,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
       await batch.commit(noResult: true);
+      await _reserveArchivedIds(tx, verified.archives);
     });
+  }
+
+  static void _insertRecords(
+    Batch batch,
+    BackupData data, {
+    bool merge = false,
+  }) {
+    final shared = merge ? ConflictAlgorithm.ignore : ConflictAlgorithm.abort;
+    for (final product in data.products) {
+      batch.insert('products', product.toMap(), conflictAlgorithm: shared);
+    }
+    for (final account in data.accounts) {
+      batch.insert('accounts', account.toMap(), conflictAlgorithm: shared);
+    }
+    for (final receipt in data.receipts) {
+      batch.insert('profit_receipts', receipt.toMap());
+    }
+    for (final cost in data.sideCosts) {
+      batch.insert('side_costs', cost.toMap());
+    }
+    final share = data.profitShare;
+    if (share != null) {
+      batch.insert('profit_share', {
+        'id': 1,
+        ...share.toMap(),
+      }, conflictAlgorithm: shared);
+    }
+    for (final order in data.orders) {
+      batch.insert('orders', order.toMap());
+      for (var position = 0; position < order.items.length; position++) {
+        batch.insert('order_items', {
+          'order_id': order.id,
+          'position': position,
+          ...order.items[position].toMap(),
+        });
+      }
+    }
+  }
+
+  static Future<void> _reserveArchivedIds(
+    Transaction tx,
+    List<ArchivedPeriod> archives,
+  ) async {
+    // A backup can be restored onto a fresh installation. Keep its archived
+    // identifiers reserved even when they are absent from the active tables.
+    final maxima = <String, int>{};
+    void reserve(String table, Iterable<int> ids) {
+      for (final id in ids) {
+        if (id > (maxima[table] ?? 0)) maxima[table] = id;
+      }
+    }
+
+    for (final archive in archives) {
+      final data = archive.data;
+      reserve('accounts', data.accounts.map((row) => row.id));
+      reserve('products', data.products.map((row) => row.id));
+      reserve('orders', data.orders.map((row) => row.id));
+      reserve('profit_receipts', data.receipts.map((row) => row.id));
+      reserve('side_costs', data.sideCosts.map((row) => row.id));
+    }
+    for (final entry in maxima.entries) {
+      final changed = await tx.rawUpdate(
+        'UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?',
+        [entry.value, entry.key],
+      );
+      if (changed == 0) {
+        await tx.insert('sqlite_sequence', {
+          'name': entry.key,
+          'seq': entry.value,
+        });
+      }
+    }
   }
 }

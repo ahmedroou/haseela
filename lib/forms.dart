@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -198,6 +199,14 @@ Future<T?> openSheet<T>(BuildContext context, Widget child) =>
       builder: (context) => child,
     );
 
+double sheetBottomInset(BuildContext context) => math.max(
+  MediaQuery.viewInsetsOf(context).bottom,
+  math.max(
+    MediaQuery.viewPaddingOf(context).bottom,
+    MediaQuery.systemGestureInsetsOf(context).bottom,
+  ),
+);
+
 class SheetFrame extends StatelessWidget {
   const SheetFrame({
     super.key,
@@ -301,23 +310,18 @@ class CompactSheetFrame extends StatelessWidget {
     canPop: !saving,
     child: LayoutBuilder(
       builder: (context, constraints) {
-        final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+        final bottomInset = sheetBottomInset(context);
         return Padding(
-          padding: EdgeInsets.only(bottom: keyboard),
+          padding: EdgeInsets.only(bottom: bottomInset),
           child: ConstrainedBox(
             constraints: BoxConstraints(
-              maxHeight: (constraints.maxHeight - keyboard).clamp(
+              maxHeight: (constraints.maxHeight - bottomInset).clamp(
                 0,
                 double.infinity,
               ),
             ),
             child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                0,
-                16,
-                14 + MediaQuery.paddingOf(context).bottom,
-              ),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -939,14 +943,16 @@ Future<void> orderSheet(
 }
 
 class ProductPicker extends StatefulWidget {
-  const ProductPicker({super.key, required this.store});
+  const ProductPicker({super.key, required this.store, required this.multiple});
   final AppStore store;
+  final bool multiple;
   @override
   State<ProductPicker> createState() => _ProductPickerState();
 }
 
 class _ProductPickerState extends State<ProductPicker> {
   final search = TextEditingController();
+  final selected = <int, Product>{};
   List<Product> products = [];
   bool loading = true, more = true;
   int generation = 0;
@@ -960,8 +966,25 @@ class _ProductPickerState extends State<ProductPicker> {
     if (!mounted) return;
     setState(() => adding = false);
     if (product != null) {
-      Navigator.pop(context, product);
+      if (!widget.multiple) {
+        Navigator.pop(context, [product]);
+        return;
+      }
+      setState(() => selected[product.id] = product);
+      search.clear();
+      await load(reset: true);
     }
+  }
+
+  void select(Product product) {
+    if (adding) return;
+    if (!widget.multiple) {
+      Navigator.pop(context, [product]);
+      return;
+    }
+    setState(() {
+      if (selected.remove(product.id) == null) selected[product.id] = product;
+    });
   }
 
   @override
@@ -1009,14 +1032,43 @@ class _ProductPickerState extends State<ProductPicker> {
     }
   }
 
+  Widget _actions() {
+    final add = OutlinedButton.icon(
+      key: const ValueKey('add_product_from_picker'),
+      onPressed: adding ? null : addProduct,
+      icon: const Icon(Icons.add_rounded, size: 18),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+      ),
+      label: Text(widget.multiple ? 'منتج جديد' : 'إضافة منتج جديد'),
+    );
+    if (!widget.multiple) return SizedBox(width: double.infinity, child: add);
+    return Row(
+      children: [
+        Expanded(
+          child: FilledButton(
+            key: const ValueKey('confirm_picker_products'),
+            onPressed: selected.isEmpty || adding
+                ? null
+                : () => Navigator.pop(context, selected.values.toList()),
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+            ),
+            child: Text(
+              'إضافة المحدد (${selected.length})',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(child: add),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Padding(
-    padding: EdgeInsets.fromLTRB(
-      24,
-      0,
-      24,
-      MediaQuery.viewInsetsOf(context).bottom + 20,
-    ),
+    padding: EdgeInsets.fromLTRB(24, 0, 24, sheetBottomInset(context) + 14),
     child: SizedBox(
       height: MediaQuery.sizeOf(context).height * .6,
       child: Column(
@@ -1024,14 +1076,13 @@ class _ProductPickerState extends State<ProductPicker> {
           Align(
             alignment: AlignmentDirectional.centerStart,
             child: Text(
-              'اختاري المنتج',
+              widget.multiple ? 'اختاري المنتجات' : 'اختاري المنتج',
               style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 10),
           TextField(
-            minLines: 1,
-            maxLines: null,
+            key: const ValueKey('product_picker_search'),
             textInputAction: TextInputAction.search,
             controller: search,
             onChanged: (_) => load(reset: true),
@@ -1040,7 +1091,7 @@ class _ProductPickerState extends State<ProductPicker> {
               prefixIcon: Icon(Icons.search_rounded),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Expanded(
             child: error != null
                 ? Center(
@@ -1068,53 +1119,61 @@ class _ProductPickerState extends State<ProductPicker> {
                               );
                       }
                       final p = products[index];
-                      return Pressable(
-                        onTap: () => Navigator.pop(context, p),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 14,
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: softTint(context, rose),
-                                  borderRadius: BorderRadius.circular(14),
+                      final checked = selected.containsKey(p.id);
+                      return Semantics(
+                        selected: widget.multiple ? checked : null,
+                        child: Pressable(
+                          key: ValueKey('picker_product_${p.id}'),
+                          onTap: () => select(p),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 10,
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: softTint(context, rose),
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: const Icon(
+                                    Icons.shopping_bag_outlined,
+                                    color: rose,
+                                    size: 22,
+                                  ),
                                 ),
-                                child: const Icon(
-                                  Icons.shopping_bag_outlined,
-                                  color: rose,
-                                  size: 22,
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        p.name,
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.titleMedium,
+                                      ),
+                                      const SizedBox(height: 5),
+                                      MoneyLine(
+                                        p.sale,
+                                        size: 16,
+                                        animated: false,
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      p.name,
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.titleMedium,
-                                    ),
-                                    const SizedBox(height: 5),
-                                    MoneyLine(
-                                      p.sale,
-                                      size: 16,
-                                      animated: false,
-                                    ),
-                                  ],
+                                const SizedBox(width: 8),
+                                Icon(
+                                  checked
+                                      ? Icons.check_circle_rounded
+                                      : Icons.add_circle_outline_rounded,
+                                  color: lilac,
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              const Icon(
-                                Icons.add_circle_outline_rounded,
-                                color: lilac,
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       );
@@ -1122,15 +1181,7 @@ class _ProductPickerState extends State<ProductPicker> {
                   ),
           ),
           const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              key: const ValueKey('add_product_from_picker'),
-              onPressed: adding ? null : addProduct,
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('إضافة منتج جديد'),
-            ),
-          ),
+          _actions(),
         ],
       ),
     ),

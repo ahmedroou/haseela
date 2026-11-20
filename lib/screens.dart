@@ -7,6 +7,7 @@ import 'forms.dart';
 import 'store.dart';
 import 'account_card.dart';
 import 'finance.dart';
+import 'period_report.dart';
 export 'account_card.dart';
 
 String shortDate(int ms) => DateFormat(
@@ -118,13 +119,26 @@ class ReportsPage extends StatelessWidget {
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: softTint(context, rose, .07),
-                  borderRadius: BorderRadius.circular(22),
+              TextButton.icon(
+                key: const ValueKey('open_period_report'),
+                onPressed: () => openPeriodReport(context, store),
+                style: TextButton.styleFrom(
+                  backgroundColor: softTint(context, lilac, .1),
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                 ),
-                child: const FlowerMark(size: 42),
+                icon: const Icon(Icons.description_outlined, size: 16),
+                label: const Text(
+                  'إنشاء تقرير',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                ),
               ),
             ],
           ),
@@ -279,7 +293,7 @@ class ReportsPage extends StatelessWidget {
                   value: r.refund,
                   icon: Icons.undo_rounded,
                   color: rose,
-                  detail: 'اضغطي لعرض سجل مبالغ جميع الطلبات الملغية',
+                  detail: 'اضغطي لعرض سجل الاسترداد',
                   onTap: () =>
                       openFinancePage(context, RefundHistoryPage(store: store)),
                 ),
@@ -1303,7 +1317,8 @@ class OrderTile extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 18),
+            if (order.items.isNotEmpty || !order.unpriced)
+              const SizedBox(height: 18),
             if (order.items.isNotEmpty)
               Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1318,21 +1333,23 @@ class OrderTile extends StatelessWidget {
                             '${item.productName} · ${item.quantity} قطعة',
                             style: Theme.of(context).textTheme.titleSmall,
                           ),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 18,
-                            runSpacing: 8,
-                            children: [
-                              _price(context, 'إجمالي الشراء', item.cost),
-                              _price(context, 'بيع الوحدة', item.sale),
-                            ],
-                          ),
+                          if (!item.unpriced) ...[
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 18,
+                              runSpacing: 8,
+                              children: [
+                                _price(context, 'إجمالي الشراء', item.cost),
+                                _price(context, 'بيع الوحدة', item.sale),
+                              ],
+                            ),
+                          ],
                         ],
                       ),
                     ),
                 ],
               )
-            else
+            else if (!order.unpriced)
               Wrap(
                 spacing: 22,
                 runSpacing: 12,
@@ -1345,53 +1362,55 @@ class OrderTile extends StatelessWidget {
                   _price(context, 'بيع الوحدة', order.sale),
                 ],
               ),
-            const Divider(height: 28),
-            Wrap(
-              spacing: 18,
-              runSpacing: 14,
-              children: [
-                _price(context, 'إجمالي الشراء', order.cost),
-                _price(context, 'إجمالي البيع', order.revenue),
-                _price(
-                  context,
-                  order.status == OrderStatus.cancelled
-                      ? 'الربح النشط'
-                      : 'ربح الطلب',
-                  order.status == OrderStatus.cancelled ? 0 : order.profit,
-                  color: order.status == OrderStatus.cancelled
-                      ? rose
-                      : order.profit < 0
-                      ? rose
-                      : sage,
+            if (!order.unpriced) ...[
+              const Divider(height: 28),
+              Wrap(
+                spacing: 18,
+                runSpacing: 14,
+                children: [
+                  _price(context, 'إجمالي الشراء', order.cost),
+                  _price(context, 'إجمالي البيع', order.revenue),
+                  _price(
+                    context,
+                    order.status == OrderStatus.cancelled
+                        ? 'الربح النشط'
+                        : 'ربح الطلب',
+                    order.status == OrderStatus.cancelled ? 0 : order.profit,
+                    color: order.status == OrderStatus.cancelled
+                        ? rose
+                        : order.profit < 0
+                        ? rose
+                        : sage,
+                  ),
+                ],
+              ),
+              if (order.status == OrderStatus.cancelled) ...[
+                const SizedBox(height: 14),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: softTint(context, rose, .08),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.undo_rounded, size: 16, color: rose),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'المفترض استرداده: ${moneyText(order.cost)} SAR',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'هذا الطلب لا يدخل في المبيعات والأرباح النشطة.',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
-            ),
-            if (order.status == OrderStatus.cancelled) ...[
-              const SizedBox(height: 14),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: softTint(context, rose, .08),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.undo_rounded, size: 16, color: rose),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'المفترض استرداده: ${moneyText(order.cost)} SAR',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                'هذا الطلب لا يدخل في المبيعات والأرباح النشطة.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
             ],
           ],
         ),

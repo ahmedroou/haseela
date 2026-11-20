@@ -22,12 +22,14 @@ class _OrderDraft {
   _OrderDraft(OrderItem? item, VoidCallback changed) {
     quantity.text = item?.quantity.toString() ?? '1';
     totalMode = item?.purchaseTotal != null;
-    purchase.text = item == null
+    purchase.text = item == null || item.unpriced
         ? ''
         : moneyInput(totalMode ? item.cost : item.purchase);
-    sale.text = item == null ? '' : moneyInput(item.sale);
+    sale.text = item == null || item.unpriced ? '' : moneyInput(item.sale);
     snapshotName.text = item?.productName ?? '';
     productId = item?.productId;
+    manual = item != null && item.productId == null;
+    hasPrices = item?.unpriced != true;
     quantity.addListener(changed);
     sale.addListener(changed);
     snapshotName.addListener(changed);
@@ -40,38 +42,59 @@ class _OrderDraft {
   final purchase = TextEditingController();
   final sale = TextEditingController();
   final snapshotName = TextEditingController();
+  final nameFocus = FocusNode();
   int? productId;
+  bool manual = false, hasPrices = true;
   bool totalMode = false, converting = false;
   int? preservedTotal, preservedQuantity, lastPurchase;
   int get count => parseQuantity(quantity.text) ?? 0;
   int get entered => parseMoney(purchase.text) ?? 0;
-  int get cost => totalMode
+  int get cost => !hasPrices
+      ? 0
+      : totalMode
       ? entered
       : preservedTotal != null && preservedQuantity == count
       ? preservedTotal!
       : entered * count;
   int get unit =>
       totalMode && count > 0 ? unitFromTotal(entered, count) : entered;
-  int get revenue => (parseMoney(sale.text) ?? 0) * count;
+  int get revenue => hasPrices ? (parseMoney(sale.text) ?? 0) * count : 0;
   bool get valid =>
       snapshotName.text.trim().isNotEmpty &&
       snapshotName.text.length <= 120 &&
       parseQuantity(quantity.text) != null &&
-      parseMoney(purchase.text) != null &&
-      parseMoney(sale.text) != null;
+      (!hasPrices ||
+          parseMoney(purchase.text) != null && parseMoney(sale.text) != null);
   OrderItem toItem() => OrderItem(
     productId: productId,
     productName: snapshotName.text,
     quantity: count,
-    purchase: unit,
+    purchase: hasPrices ? unit : 0,
     purchaseTotal:
-        totalMode || preservedTotal != null && preservedQuantity == count
+        hasPrices &&
+            (totalMode || preservedTotal != null && preservedQuantity == count)
         ? cost
         : null,
-    sale: parseMoney(sale.text)!,
+    sale: hasPrices ? parseMoney(sale.text)! : 0,
+    unpriced: !hasPrices,
   );
 
+  void selectCatalogProduct(Product product) {
+    manual = false;
+    hasPrices = true;
+    productId = product.id;
+    snapshotName.text = product.name;
+    sale.text = moneyInput(product.sale);
+    lastPurchase = product.lastPurchase;
+    preservedTotal = null;
+    final remembered = product.lastPurchase;
+    purchase.text = remembered == null
+        ? ''
+        : moneyInput(totalMode && count > 0 ? remembered * count : remembered);
+  }
+
   void dispose() {
+    nameFocus.dispose();
     for (final c in [quantity, purchase, sale, snapshotName]) {
       c.dispose();
     }
@@ -171,40 +194,59 @@ class _OrderFormState extends State<OrderForm> {
     setState(() => draft.switchMode(value));
   }
 
+  void addManualProduct() {
+    setState(() {
+      if (draft.productId != null || snapshotName.text.trim().isNotEmpty) {
+        drafts.add(_OrderDraft(null, recalculate));
+        selectedIndex = drafts.length - 1;
+      }
+      draft.manual = true;
+      draft.hasPrices = false;
+      error = null;
+    });
+    final manualDraft = draft;
+    showProductFields();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && draft == manualDraft) manualDraft.nameFocus.requestFocus();
+    });
+  }
+
   Future<void> selectProduct({bool add = false}) async {
-    final selected = await openSheet<Product>(
+    FocusScope.of(context).unfocus();
+    final emptyDraft =
+        draft.productId == null && snapshotName.text.trim().isEmpty;
+    final selected = await openSheet<List<Product>>(
       context,
-      ProductPicker(store: widget.store),
+      ProductPicker(store: widget.store, multiple: add || emptyDraft),
     );
-    if (selected == null || !mounted) return;
-    // Fetch the saved value, including purchase memory, rather than a stale tile.
-    Product? product;
+    if (selected == null || selected.isEmpty || !mounted) return;
+    // Refresh the price and purchase memory before applying the selection.
+    final List<Product?> products;
     try {
-      product = await widget.store.database.product(selected.id);
+      products = await Future.wait(
+        selected.map((product) => widget.store.database.product(product.id)),
+      );
+      if (products.contains(null)) {
+        throw StateError('أحد المنتجات المحددة لم يعد موجودًا');
+      }
     } catch (e) {
       if (mounted) notice(context, friendlyError(e));
       return;
     }
-    if (!mounted || product == null) return;
-    final p = product;
+    if (!mounted) return;
     FocusScope.of(context).unfocus();
     setState(() {
-      if (add) {
-        drafts.add(_OrderDraft(null, recalculate));
-        selectedIndex = drafts.length - 1;
+      final replacesCurrent = !add || emptyDraft;
+      final firstAdded = replacesCurrent ? selectedIndex : drafts.length;
+      for (final (index, product) in products.indexed) {
+        final entry = index == 0 && replacesCurrent
+            ? draft
+            : _OrderDraft(null, recalculate);
+        entry.selectCatalogProduct(product!);
+        if (index > 0 || !replacesCurrent) drafts.add(entry);
       }
-      draft.productId = p.id;
-      snapshotName.text = p.name;
-      sale.text = moneyInput(p.sale);
-      draft.lastPurchase = p.lastPurchase;
-      draft.preservedTotal = null;
-      purchase.text = p.lastPurchase == null
-          ? ''
-          : moneyInput(
-              totalMode
-                  ? p.lastPurchase! * (count > 0 ? count : 1)
-                  : p.lastPurchase!,
-            );
+      selectedIndex = firstAdded;
+      error = null;
     });
     showProductFields();
   }
@@ -216,8 +258,8 @@ class _OrderFormState extends State<OrderForm> {
       selectDraft(invalid);
       setState(
         () => error = snapshotName.text.trim().isEmpty
-            ? 'اختاري المنتج أولًا'
-            : 'راجعي كمية وأسعار «${snapshotName.text}»',
+            ? (draft.manual ? 'اكتبي اسم المنتج' : 'اختاري المنتج أولًا')
+            : 'راجعي بيانات «${snapshotName.text}»',
       );
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) key.currentState?.validate();
@@ -257,6 +299,7 @@ class _OrderFormState extends State<OrderForm> {
     final profit = status == OrderStatus.cancelled ? 0 : revenue - totalCost;
     final approximate = count > 0 && cost != unit * count;
     final multiple = drafts.length > 1;
+    final showTotals = drafts.any((draft) => draft.hasPrices);
     return CompactSheetFrame(
       title: widget.order == null ? 'طلب جديد' : 'تعديل الطلب',
       saving: saving,
@@ -335,59 +378,54 @@ class _OrderFormState extends State<OrderForm> {
               ),
               const SizedBox(height: 10),
             ],
-            Pressable(
-              key: const ValueKey('order_product_picker'),
-              onTap: saving ? null : () => selectProduct(),
-              child: SurfaceCard(
-                color: softTint(context, lilac, .07),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
+            Row(
+              children: [
+                Expanded(
+                  child: draft.manual
+                      ? TextFormField(
+                          key: const ValueKey('order_manual_name'),
+                          controller: snapshotName,
+                          focusNode: draft.nameFocus,
+                          validator: nameValidator,
+                          enabled: !saving,
+                          maxLength: 120,
+                          textInputAction: TextInputAction.next,
+                          decoration: const InputDecoration(
+                            labelText: 'اسم المنتج',
+                            counterText: '',
+                          ),
+                        )
+                      : _catalogPicker(context),
                 ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.shopping_bag_outlined,
-                      color: lilac,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: widget.order == null
-                          ? Text(
-                              snapshotName.text.isEmpty
-                                  ? 'اختاري من قائمة المنتجات'
-                                  : snapshotName.text,
-                              style: Theme.of(context).textTheme.titleSmall,
-                            )
-                          : TextFormField(
-                              controller: snapshotName,
-                              validator: nameValidator,
-                              enabled: !saving,
-                              maxLength: 120,
-                              maxLines: null,
-                              style: Theme.of(context).textTheme.titleSmall,
-                              decoration: const InputDecoration(
-                                isDense: true,
-                                filled: false,
-                                counterText: '',
-                                contentPadding: EdgeInsets.zero,
-                                border: InputBorder.none,
-                                enabledBorder: InputBorder.none,
-                                hintText: 'اسم المنتج',
-                              ),
-                            ),
-                    ),
-                    const SizedBox(width: 6),
-                    const Icon(
-                      Icons.keyboard_arrow_down_rounded,
-                      size: 20,
-                      color: lilac,
-                    ),
-                  ],
+                if (draft.manual)
+                  IconButton(
+                    tooltip: 'اختيار من قائمة المنتجات',
+                    onPressed: saving ? null : () => selectProduct(),
+                    icon: const Icon(Icons.shopping_bag_outlined, size: 20),
+                  ),
+                IconButton(
+                  key: const ValueKey('order_add_manual_product'),
+                  tooltip: 'إضافة منتج يدوي',
+                  onPressed: saving ? null : addManualProduct,
+                  icon: const Icon(Icons.edit_note_rounded, size: 22),
+                ),
+              ],
+            ),
+            if (draft.manual)
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: FilterChip(
+                  key: const ValueKey('order_manual_prices'),
+                  label: const Text('إضافة أسعار'),
+                  selected: draft.hasPrices,
+                  onSelected: saving
+                      ? null
+                      : (value) => setState(() {
+                          draft.hasPrices = value;
+                          error = null;
+                        }),
                 ),
               ),
-            ),
             const SizedBox(height: 10),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -408,71 +446,75 @@ class _OrderFormState extends State<OrderForm> {
                     decoration: const InputDecoration(labelText: 'الكمية'),
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: completeTextField(
-                    key: const ValueKey('order_sale'),
-                    controller: sale,
-                    compact: true,
-                    enabled: !saving,
-                    validator: priceValidator,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    textDirection: TextDirection.ltr,
-                    inputFormatters: [numberInputFormatter],
-                    textInputAction: TextInputAction.next,
-                    decoration: const InputDecoration(
-                      labelText: 'بيع الوحدة',
-                      suffixIcon: _currency,
+                if (draft.hasPrices) ...[
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: completeTextField(
+                      key: const ValueKey('order_sale'),
+                      controller: sale,
+                      compact: true,
+                      enabled: !saving,
+                      validator: priceValidator,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      textDirection: TextDirection.ltr,
+                      inputFormatters: [numberInputFormatter],
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: 'بيع الوحدة',
+                        suffixIcon: _currency,
+                      ),
                     ),
                   ),
+                ],
+              ],
+            ),
+            if (draft.hasPrices) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  _mode('شراء الوحدة', false),
+                  _mode('إجمالي شراء الكمية', true),
+                ],
+              ),
+              const SizedBox(height: 5),
+              completeTextField(
+                key: const ValueKey('order_purchase'),
+                controller: purchase,
+                compact: true,
+                enabled: !saving,
+                validator: priceValidator,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
                 ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
-                _mode('شراء الوحدة', false),
-                _mode('إجمالي شراء الكمية', true),
-              ],
-            ),
-            const SizedBox(height: 5),
-            completeTextField(
-              key: const ValueKey('order_purchase'),
-              controller: purchase,
-              compact: true,
-              enabled: !saving,
-              validator: priceValidator,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
+                textDirection: TextDirection.ltr,
+                inputFormatters: [numberInputFormatter],
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
+                decoration: InputDecoration(
+                  labelText: totalMode
+                      ? 'ما دفعتِه للكمية كاملة'
+                      : 'سعر شراء الوحدة',
+                  suffixIcon: _currency,
+                ),
               ),
-              textDirection: TextDirection.ltr,
-              inputFormatters: [numberInputFormatter],
-              textInputAction: TextInputAction.done,
-              onFieldSubmitted: (_) => FocusScope.of(context).unfocus(),
-              decoration: InputDecoration(
-                labelText: totalMode
-                    ? 'ما دفعتِه للكمية كاملة'
-                    : 'سعر شراء الوحدة',
-                suffixIcon: _currency,
+              Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Text(
+                  totalMode
+                      ? 'سعر الوحدة ${approximate ? '≈ ' : ''}${moneyText(unit)} ريال · الإجمالي محفوظ كما أدخلتِه'
+                      : lastPurchase != null
+                      ? 'آخر شراء: ${moneyText(lastPurchase!)} ريال للوحدة · يمكنك تعديله'
+                      : 'سعر البيع خاص بهذا الطلب.',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(fontSize: 11),
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 5),
-              child: Text(
-                totalMode
-                    ? 'سعر الوحدة ${approximate ? '≈ ' : ''}${moneyText(unit)} ريال · الإجمالي محفوظ كما أدخلتِه'
-                    : lastPurchase != null
-                    ? 'آخر شراء: ${moneyText(lastPurchase!)} ريال للوحدة · يمكنك تعديله'
-                    : 'سعر البيع خاص بهذا الطلب.',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(fontSize: 11),
-              ),
-            ),
+            ],
             const SizedBox(height: 7),
             if (multiple)
               Text(
@@ -514,36 +556,37 @@ class _OrderFormState extends State<OrderForm> {
                   )
                   .toList(),
             ),
-            const SizedBox(height: 9),
-            LayoutBuilder(
-              builder: (context, c) {
-                final columns = MediaQuery.textScalerOf(context).scale(12) > 19
-                    ? 1
-                    : 3;
-                final width = (c.maxWidth - (columns - 1) * 6) / columns;
-                return Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    _summary('إجمالي الشراء', totalCost, width, lilac),
-                    _summary(
-                      status == OrderStatus.cancelled
-                          ? 'الاسترداد'
-                          : 'إجمالي البيع',
-                      status == OrderStatus.cancelled ? totalCost : revenue,
-                      width,
-                      peach,
-                    ),
-                    _summary(
-                      separate && multiple ? 'إجمالي الربح' : 'ربح الطلب',
-                      profit,
-                      width,
-                      profit < 0 ? rose : sage,
-                    ),
-                  ],
-                );
-              },
-            ),
+            if (showTotals) ...[
+              const SizedBox(height: 9),
+              LayoutBuilder(
+                builder: (context, c) {
+                  final columns =
+                      MediaQuery.textScalerOf(context).scale(12) > 19 ? 1 : 3;
+                  final width = (c.maxWidth - (columns - 1) * 6) / columns;
+                  return Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      _summary('إجمالي الشراء', totalCost, width, lilac),
+                      _summary(
+                        status == OrderStatus.cancelled
+                            ? 'الاسترداد'
+                            : 'إجمالي البيع',
+                        status == OrderStatus.cancelled ? totalCost : revenue,
+                        width,
+                        peach,
+                      ),
+                      _summary(
+                        separate && multiple ? 'إجمالي الربح' : 'ربح الطلب',
+                        profit,
+                        width,
+                        profit < 0 ? rose : sage,
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ],
             TextButton.icon(
               key: const ValueKey('order_add_product'),
               onPressed: saving ? null : () => selectProduct(add: true),
@@ -556,6 +599,49 @@ class _OrderFormState extends State<OrderForm> {
       ),
     );
   }
+
+  Widget _catalogPicker(BuildContext context) => Pressable(
+    key: const ValueKey('order_product_picker'),
+    onTap: saving ? null : () => selectProduct(),
+    child: SurfaceCard(
+      color: softTint(context, lilac, .07),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        children: [
+          const Icon(Icons.shopping_bag_outlined, color: lilac, size: 20),
+          const SizedBox(width: 9),
+          Expanded(
+            child: widget.order == null
+                ? Text(
+                    snapshotName.text.isEmpty
+                        ? 'اختاري من قائمة المنتجات'
+                        : snapshotName.text,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  )
+                : TextFormField(
+                    controller: snapshotName,
+                    validator: nameValidator,
+                    enabled: !saving,
+                    maxLength: 120,
+                    maxLines: null,
+                    style: Theme.of(context).textTheme.titleSmall,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: false,
+                      counterText: '',
+                      contentPadding: EdgeInsets.zero,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      hintText: 'اسم المنتج',
+                    ),
+                  ),
+          ),
+          const SizedBox(width: 6),
+          const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: lilac),
+        ],
+      ),
+    ),
+  );
 
   Widget _mode(String title, bool value) => ChoiceChip(
     key: ValueKey(value ? 'purchase_total_mode' : 'purchase_unit_mode'),

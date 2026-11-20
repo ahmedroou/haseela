@@ -68,6 +68,98 @@ void main() {
     },
   );
 
+  test(
+    'period report includes whole dates, expands orders and sums sale amounts by name',
+    () async {
+      final start = DateTime(2026, 11, 3);
+      final end = DateTime(2026, 11, 4);
+      Future<void> date(int orderId, DateTime createdAt) => db.db.update(
+        'orders',
+        {'created_at': createdAt.millisecondsSinceEpoch},
+        where: 'id = ?',
+        whereArgs: [orderId],
+      );
+      await date(await add(quantity: 2, sale: 1255), start);
+      final ids = await db.saveOrders(
+        accountId: account,
+        status: OrderStatus.arrived,
+        items: const [
+          OrderItem(
+            productId: null,
+            productName: 'بيبي جوي',
+            quantity: 3,
+            purchase: 1000,
+            sale: 1401,
+          ),
+          OrderItem(
+            productId: null,
+            productName: 'قلم',
+            quantity: 4,
+            purchase: 0,
+            sale: 0,
+            unpriced: true,
+          ),
+        ],
+      );
+      await date(ids.single, DateTime(2026, 11, 4, 23, 59, 59, 999));
+      await date(await add(status: OrderStatus.cancelled), end);
+      await date(await add(), DateTime(2026, 11, 5));
+      await date(await add(), DateTime(2026, 11, 2, 23, 59, 59, 999));
+
+      final result = await db.periodReportByDate(start, end);
+      expect(
+        result.items.map((item) => (item.name, item.quantity, item.amount)),
+        [('بيبي جوي', 5, 6713), ('قلم', 4, null)],
+      );
+      expect(result.amount, 6713);
+      expect(result.quantity, 9);
+      expect(
+        result.toCsv('2026/11/03 إلى 2026/11/04'),
+        contains('"بيبي جوي",5,67.13\r\n"قلم",4,\r\n"الإجمالي",9,67.13'),
+      );
+      expect((await db.periodReportByDate(end, end)).amount, 4203);
+      await expectLater(
+        db.periodReportByDate(end, start),
+        throwsFormatException,
+      );
+    },
+  );
+
+  test(
+    'period report includes both accounts and all intervening accounts in creation order',
+    () async {
+      final ids = await db.saveAccounts([
+        (name: 'بداية الفترة', isClosed: false),
+        (name: 'داخل الفترة', isClosed: false),
+        (name: 'نهاية الفترة', isClosed: false),
+        (name: 'بعد الفترة', isClosed: false),
+      ]);
+      await add(accountId: account, quantity: 9, sale: 900);
+      await add(accountId: ids[0], quantity: 1, sale: 1200);
+      await add(accountId: ids[1], quantity: 2, sale: 1300);
+      await add(accountId: ids[2], quantity: 3, sale: 1500);
+      await add(accountId: ids[3], quantity: 8, sale: 800);
+      await db.toggleAccountClosed(ids[1], true);
+      // Batch-created accounts have the same timestamp. Their IDs break ties.
+      await db.db.update(
+        'accounts',
+        {'created_at': 100},
+        where: 'id = ?',
+        whereArgs: [account],
+      );
+
+      final result = await db.periodReportByAccounts(ids[2], ids[0]);
+      expect(result.items.single.name, 'بيبي جوي');
+      expect(result.quantity, 6);
+      expect(result.amount, 8300);
+      expect((await db.periodReportByAccounts(ids[1], ids[1])).quantity, 2);
+      await expectLater(
+        db.periodReportByAccounts(ids[0], 999999),
+        throwsStateError,
+      );
+    },
+  );
+
   List<OrderItem> mixedItems({int? secondProductId}) => [
     OrderItem(
       productId: product,
@@ -140,6 +232,82 @@ void main() {
       expect(await db.db.query('order_items'), isEmpty);
     },
   );
+
+  test('unpriced products persist without affecting money totals', () async {
+    const unpriced = OrderItem(
+      productId: null,
+      productName: 'دفتر',
+      quantity: 2,
+      purchase: 0,
+      sale: 0,
+      unpriced: true,
+    );
+    const priced = OrderItem(
+      productId: null,
+      productName: 'حقيبة',
+      quantity: 3,
+      purchase: 599,
+      sale: 900,
+    );
+    final single = (await db.saveOrders(
+      accountId: account,
+      items: [unpriced],
+      status: OrderStatus.cancelled,
+    )).single;
+    final mixed = (await db.saveOrders(
+      accountId: account,
+      items: [unpriced, priced],
+      status: OrderStatus.arrived,
+    )).single;
+    final report = await db.report();
+    expect(report.orders, 2);
+    expect(report.pieces, 7);
+    expect(report.spent, 1797);
+    expect(report.expectedSales, 2700);
+    expect(report.expectedProfit, 903);
+    expect(report.refund, 0);
+    expect(await db.cancelledOrders(), isEmpty);
+
+    final backup = await db.snapshot();
+    await db.restore(BackupData.decode(backup.encode()));
+    final orders = await db.orders(account);
+    final restoredSingle = orders.singleWhere((order) => order.id == single);
+    expect(restoredSingle.unpriced, isTrue);
+    expect(restoredSingle.lines.single.unpriced, isTrue);
+    final restoredMixed = orders.singleWhere((order) => order.id == mixed);
+    expect(restoredMixed.unpriced, isFalse);
+    expect(restoredMixed.items.map((item) => item.unpriced), [true, false]);
+
+    await db.changeStatus(mixed, OrderStatus.cancelled);
+    expect((await db.report()).refund, 1797);
+    expect((await db.cancelledOrders()).single.id, mixed);
+
+    final invalid = jsonDecode(backup.encode()) as Map;
+    final row = (invalid['orders'] as List).singleWhere(
+      (row) => row['id'] == single,
+    );
+    row['sale'] = 100;
+    expect(() => BackupData.decode(jsonEncode(invalid)), throwsFormatException);
+  });
+
+  test('v10 migration and v6 backups preserve explicit zero prices', () async {
+    await add(purchase: 0, sale: 0);
+    final backup = jsonDecode((await db.snapshot()).encode()) as Map;
+    backup['version'] = 6;
+    (backup['orders'][0] as Map).remove('is_unpriced');
+    await db.db.execute('ALTER TABLE orders DROP COLUMN is_unpriced');
+    await db.db.execute('ALTER TABLE order_items DROP COLUMN is_unpriced');
+    await db.db.setVersion(10);
+    final path = db.db.path;
+    await db.close();
+    db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
+    final migrated = (await db.orders(account)).single;
+    expect(migrated.unpriced, isFalse);
+    expect(migrated.sale, 0);
+    expect(migrated.purchase, 0);
+    await db.restore(BackupData.decode(jsonEncode(backup)));
+    expect((await db.orders(account)).single.unpriced, isFalse);
+  });
 
   test('separate products save together and reverse independently', () async {
     final ids = await db.saveOrders(
@@ -270,7 +438,7 @@ void main() {
       final path = db.db.path;
       await db.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 10);
+      expect(await db.db.getVersion(), 12);
       expect((await db.report()).spent, 10000);
       expect((await db.report()).expectedSales, 15000);
       expect((await db.orders(account)).single.items, isEmpty);
@@ -407,7 +575,7 @@ void main() {
       final path = db.db.path;
       await db.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 10);
+      expect(await db.db.getVersion(), 12);
       expect((await db.report()).expectedProfit, 15000);
       expect((await db.report()).profitShare, isNull);
       final legacy = jsonDecode((await db.snapshot()).encode()) as Map;
@@ -478,7 +646,7 @@ void main() {
       final path = db.db.path;
       await db.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 10);
+      expect(await db.db.getVersion(), 12);
       final kept = (await db.report()).profitShare!;
       expect(kept.name, 'نور');
       expect(kept.rate, 3500);
@@ -628,7 +796,7 @@ void main() {
       );
       await old.close();
       db = await AppDatabase.open(path: path, factory: databaseFactoryFfi);
-      expect(await db.db.getVersion(), 10);
+      expect(await db.db.getVersion(), 12);
       expect((await db.product(1))!.lastPurchase, 8000);
       expect((await db.orders(1)).length, 2);
       expect((await db.report()).spent, 15500);
