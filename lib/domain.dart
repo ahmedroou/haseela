@@ -338,45 +338,84 @@ class ProfitShare {
 }
 
 class PeriodReportItem {
-  const PeriodReportItem(this.name, this.quantity, this.amount);
+  const PeriodReportItem(
+    this.name,
+    this.quantity,
+    this.amount, {
+    this.unitPrice,
+  });
 
   final String name;
   final int quantity;
   final int? amount;
+  final int? unitPrice;
 }
 
 class PeriodReport {
   PeriodReport(Iterable<PeriodReportItem> items)
-    : items = List.unmodifiable(items);
+    : items = List.unmodifiable(items) {
+    amount = _reportMoney(
+      this.items.fold(
+        BigInt.zero,
+        (total, item) => total + BigInt.from(item.amount ?? 0),
+      ),
+    );
+  }
 
-  factory PeriodReport.fromOrders(Iterable<PurchaseOrder> orders) {
+  factory PeriodReport.fromOrders(
+    Iterable<PurchaseOrder> orders, {
+    Map<int, int> catalogPrices = const {},
+  }) => PeriodReport.fromPricedLines([
+    for (final order in orders)
+      if (order.status != OrderStatus.cancelled)
+        for (final item in order.lines)
+          (
+            name: item.productName,
+            quantity: item.quantity,
+            price: item.unpriced
+                ? null
+                : catalogPrices[item.productId] ?? item.sale,
+          ),
+  ]);
+
+  factory PeriodReport.fromPricedLines(
+    Iterable<({String name, int quantity, int? price})> lines,
+  ) {
     // Match SQLite NOCASE, which folds ASCII only, and keeps the smallest name.
     final asciiUppercase = RegExp('[A-Z]');
     final groups = <String, PeriodReportItem>{};
-    for (final order in orders) {
-      if (order.status == OrderStatus.cancelled) continue;
-      for (final item in order.lines) {
-        final key = item.productName.replaceAllMapped(
-          asciiUppercase,
-          (match) => match[0]!.toLowerCase(),
-        );
-        final prior = groups[key];
-        groups[key] = PeriodReportItem(
-          prior != null && prior.name.compareTo(item.productName) < 0
-              ? prior.name
-              : item.productName,
-          (prior?.quantity ?? 0) + item.quantity,
-          item.unpriced ? prior?.amount : (prior?.amount ?? 0) + item.revenue,
-        );
-      }
+    for (final (:name, :quantity, :price) in lines) {
+      final key = name.replaceAllMapped(
+        asciiUppercase,
+        (match) => match[0]!.toLowerCase(),
+      );
+      final prior = groups[key];
+      groups[key] = PeriodReportItem(
+        prior != null && prior.name.compareTo(name) < 0 ? prior.name : name,
+        (prior?.quantity ?? 0) + quantity,
+        price == null
+            ? prior?.amount
+            : _reportMoney(
+                BigInt.from(quantity) * BigInt.from(price) +
+                    BigInt.from(prior?.amount ?? 0),
+              ),
+        unitPrice: prior == null || prior.unitPrice == price ? price : null,
+      );
     }
     final keys = groups.keys.toList()..sort();
     return PeriodReport(keys.map((key) => groups[key]!));
   }
 
+  static int _reportMoney(BigInt amount) {
+    if (!amount.isValidInt) {
+      throw const FormatException('إجمالي التقرير أكبر من النطاق المسموح');
+    }
+    return amount.toInt();
+  }
+
   final List<PeriodReportItem> items;
   int get quantity => items.fold(0, (total, item) => total + item.quantity);
-  int get amount => items.fold(0, (total, item) => total + (item.amount ?? 0));
+  late final int amount;
 
   String toCsv(String period) {
     final formulaPrefix = RegExp(r'^[\r\n\t]|^\s*[=+\-@]');
@@ -387,11 +426,11 @@ class PeriodReport {
     }
 
     return [
-      '\uFEFF${cell('الفترة')},${cell(period)},',
-      '${cell('الصنف')},${cell('العدد')},${cell('المبلغ المطلوب (ريال)')}',
+      '\uFEFF${cell('الفترة')},${cell(period)},,',
+      '${cell('الصنف')},${cell('العدد')},${cell('سعر الوحدة (ريال)')},${cell('المبلغ المطلوب (ريال)')}',
       for (final item in items)
-        '${cell(item.name)},${item.quantity},${item.amount == null ? '' : moneyInput(item.amount!)}',
-      '${cell('الإجمالي')},$quantity,${moneyInput(amount)}',
+        '${cell(item.name)},${item.quantity},${item.unitPrice == null ? '' : moneyInput(item.unitPrice!)},${item.amount == null ? '' : moneyInput(item.amount!)}',
+      '${cell('الإجمالي')},$quantity,,${moneyInput(amount)}',
     ].join('\r\n');
   }
 }

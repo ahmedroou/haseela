@@ -8,19 +8,31 @@ import 'domain.dart';
 typedef PeriodReportPdfData = ({
   PeriodReport report,
   String period,
-  String filterLabel,
+  String? filterLabel,
   ByteData regularFont,
   ByteData boldFont,
 });
 
 const _plum = PdfColor.fromInt(0xFF49374F);
-const _lilac = PdfColor.fromInt(0xFF8E72B1);
-const _rose = PdfColor.fromInt(0xFFCF849B);
 const _ink = PdfColor.fromInt(0xFF24202A);
 const _muted = PdfColor.fromInt(0xFF675C71);
 const _lavender = PdfColor.fromInt(0xFFF0EAF5);
 const _stripe = PdfColor.fromInt(0xFFF8F5FA);
 const _rule = PdfColor.fromInt(0xFFE7DFEB);
+
+class _ReportFont extends pw.TtfFont {
+  _ReportFont(super.data);
+
+  @override
+  PdfTtfFont buildFont(PdfDocument document) {
+    final font = PdfTtfFont(document, data);
+    final glyphs = font.font.charToGlyphIndexMap;
+    // pdf 3.12 aliases yeh to alef maksura and can leave isolated yeh unmapped.
+    glyphs[0xFEF1] = glyphs[0x064A]!;
+    glyphs[0xFEEF] = glyphs[0x0649]!;
+    return font;
+  }
+}
 
 String _issueDateText(DateTime now) =>
     '${now.year}/${now.month.toString().padLeft(2, '0')}/${now.day.toString().padLeft(2, '0')}';
@@ -28,14 +40,15 @@ String _issueDateText(DateTime now) =>
 Future<Uint8List> buildPeriodReportPdf(PeriodReportPdfData data) {
   final report = data.report;
   final issueDate = _issueDateText(DateTime.now());
-  final document = pw.Document(title: 'تقرير الفترة', author: 'حصيلة');
+  final document = pw.Document(title: 'تقرير الأصناف', author: 'حصيلة');
+  final subtitle = [?data.filterLabel, data.period].join(' · ');
   document.addPage(
     pw.MultiPage(
       pageFormat: PdfPageFormat.a4,
       margin: const pw.EdgeInsets.fromLTRB(36, 36, 36, 32),
       theme: pw.ThemeData.withFont(
-        base: pw.Font.ttf(data.regularFont),
-        bold: pw.Font.ttf(data.boldFont),
+        base: _ReportFont(data.regularFont),
+        bold: _ReportFont(data.boldFont),
       ),
       textDirection: pw.TextDirection.rtl,
       // Each row is shorter than a page, even for the longest product name.
@@ -54,12 +67,12 @@ Future<Uint8List> buildPeriodReportPdf(PeriodReportPdfData data) {
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
                   _text(
-                    'حصيلة  ·  تقرير الفترة',
+                    'حصيلة  ·  تقرير الأصناف',
                     size: 10.5,
                     bold: true,
                     color: _plum,
                   ),
-                  _text(data.filterLabel, size: 9.5, color: _muted),
+                  _text(data.period, size: 9.5, color: _muted),
                 ],
               ),
             ),
@@ -84,10 +97,10 @@ Future<Uint8List> buildPeriodReportPdf(PeriodReportPdfData data) {
       build: (_) => [
         pw.Container(
           width: double.infinity,
-          padding: const pw.EdgeInsets.fromLTRB(20, 16, 20, 16),
+          padding: const pw.EdgeInsets.fromLTRB(20, 18, 20, 18),
           decoration: pw.BoxDecoration(
             color: _plum,
-            borderRadius: pw.BorderRadius.circular(14),
+            borderRadius: pw.BorderRadius.circular(10),
           ),
           child: pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -95,22 +108,7 @@ Future<Uint8List> buildPeriodReportPdf(PeriodReportPdfData data) {
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  pw.Container(
-                    padding: const pw.EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: pw.BoxDecoration(
-                      color: _lilac,
-                      borderRadius: pw.BorderRadius.circular(7),
-                    ),
-                    child: _text(
-                      'حصيلة · ملخص الأصناف',
-                      size: 10,
-                      bold: true,
-                      color: PdfColors.white,
-                    ),
-                  ),
+                  _text('حصيلة', size: 12, bold: true, color: _lavender),
                   _text(
                     'تاريخ الإصدار: $issueDate',
                     size: 9.5,
@@ -120,17 +118,13 @@ Future<Uint8List> buildPeriodReportPdf(PeriodReportPdfData data) {
               ),
               pw.SizedBox(height: 10),
               _text(
-                'تقرير الفترة',
-                size: 26,
+                'تقرير الأصناف',
+                size: 25,
                 bold: true,
                 color: PdfColors.white,
               ),
               pw.SizedBox(height: 5),
-              _text(
-                '${data.filterLabel} · ${data.period}',
-                size: 11.5,
-                color: _lavender,
-              ),
+              _text(subtitle, size: 11.5, color: _lavender),
             ],
           ),
         ),
@@ -143,7 +137,7 @@ Future<Uint8List> buildPeriodReportPdf(PeriodReportPdfData data) {
                 'إجمالي المبلغ المطلوب',
                 moneyText(report.amount),
                 unit: 'ريال',
-                accent: _rose,
+                primary: true,
               ),
             ),
             pw.SizedBox(width: 8),
@@ -152,7 +146,6 @@ Future<Uint8List> buildPeriodReportPdf(PeriodReportPdfData data) {
                 'إجمالي الكمية',
                 '${report.quantity}',
                 unit: 'قطعة',
-                accent: _lilac,
               ),
             ),
             pw.SizedBox(width: 8),
@@ -161,7 +154,6 @@ Future<Uint8List> buildPeriodReportPdf(PeriodReportPdfData data) {
                 'عدد الأصناف',
                 '${report.items.length}',
                 unit: 'صنف',
-                accent: _plum,
               ),
             ),
           ],
@@ -193,10 +185,10 @@ Future<Uint8List> buildPeriodReportPdf(PeriodReportPdfData data) {
               horizontalInside: pw.BorderSide(color: _rule, width: .5),
             ),
             columnWidths: const {
-              0: pw.FlexColumnWidth(2.1),
-              1: pw.FlexColumnWidth(1.05),
-              2: pw.FlexColumnWidth(4.3),
-              3: pw.FlexColumnWidth(0.65),
+              0: pw.FlexColumnWidth(1.8),
+              1: pw.FlexColumnWidth(1.5),
+              2: pw.FlexColumnWidth(0.9),
+              3: pw.FlexColumnWidth(4.4),
             },
             defaultVerticalAlignment: pw.TableCellVerticalAlignment.middle,
             children: [
@@ -204,10 +196,10 @@ Future<Uint8List> buildPeriodReportPdf(PeriodReportPdfData data) {
                 repeat: true,
                 decoration: const pw.BoxDecoration(color: _plum),
                 children: [
-                  _cell('المبلغ (ريال)', heading: true),
+                  _cell('الإجمالي (ريال)', heading: true),
+                  _cell('سعر الوحدة', heading: true),
                   _cell('العدد', heading: true),
                   _cell('الصنف', heading: true, name: true),
-                  _cell('#', heading: true),
                 ],
               ),
               for (final (index, item) in report.items.indexed)
@@ -216,29 +208,35 @@ Future<Uint8List> buildPeriodReportPdf(PeriodReportPdfData data) {
                     color: index.isEven ? _stripe : PdfColors.white,
                   ),
                   children: [
-                    _cell(item.amount == null ? '-' : moneyText(item.amount!)),
+                    _cell(_amountText(item.amount), bold: true),
+                    _cell(_amountText(item.unitPrice)),
                     _cell('${item.quantity}'),
                     _cell(item.name, name: true),
-                    _cell('${index + 1}', muted: true),
                   ],
                 ),
               pw.TableRow(
                 decoration: const pw.BoxDecoration(color: _lavender),
                 children: [
                   _cell(moneyText(report.amount), bold: true),
+                  _cell(''),
                   _cell('${report.quantity}', bold: true),
                   _cell('الإجمالي العام', name: true, bold: true),
-                  _cell(''),
                 ],
               ),
             ],
           ),
           pw.SizedBox(height: 8),
           _text(
-            'المبالغ محسوبة بأسعار البيع للطلبات غير الملغاة خلال الفترة المحددة.',
-            size: 9,
+            'المبالغ بالريال السعودي وتُحسب بأسعار قائمة المنتجات عند توفرها، وبالسعر المسجّل للمنتجات الأخرى. الطلبات الملغاة مستبعدة.',
+            size: 9.5,
             color: _muted,
           ),
+          if (report.items.any((item) => item.unitPrice == null))
+            _text(
+              'الشرطة في عمود سعر الوحدة تعني أن السعر غير محدد أو يختلف بين الكميات.',
+              size: 9.5,
+              color: _muted,
+            ),
         ],
       ],
     ),
@@ -250,32 +248,18 @@ pw.Widget _metricCard(
   String label,
   String value, {
   String? unit,
-  required PdfColor accent,
+  bool primary = false,
 }) => pw.Container(
   padding: const pw.EdgeInsets.fromLTRB(12, 10, 12, 10),
   decoration: pw.BoxDecoration(
-    color: _lavender,
+    color: primary ? _lavender : _stripe,
     borderRadius: pw.BorderRadius.circular(10),
     border: pw.Border.all(color: _rule, width: .8),
   ),
   child: pw.Column(
     crossAxisAlignment: pw.CrossAxisAlignment.start,
     children: [
-      pw.Row(
-        mainAxisSize: pw.MainAxisSize.min,
-        children: [
-          pw.Container(
-            width: 6,
-            height: 6,
-            decoration: pw.BoxDecoration(
-              color: accent,
-              shape: pw.BoxShape.circle,
-            ),
-          ),
-          pw.SizedBox(width: 5),
-          _text(label, size: 10, color: _muted),
-        ],
-      ),
+      _text(label, size: 10, color: _muted),
       pw.SizedBox(height: 5),
       pw.Wrap(
         spacing: 4,
@@ -289,23 +273,20 @@ pw.Widget _metricCard(
   ),
 );
 
+String _amountText(int? amount) => amount == null ? '-' : moneyText(amount);
+
 pw.Widget _cell(
   String value, {
   bool heading = false,
   bool name = false,
   bool bold = false,
-  bool muted = false,
 }) => pw.Padding(
   padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 7),
   child: _text(
     value,
     size: 10.5,
     bold: heading || bold,
-    color: heading
-        ? PdfColors.white
-        : muted
-        ? _muted
-        : _ink,
+    color: heading ? PdfColors.white : _ink,
     numeric: !heading && !name,
     align: name ? pw.TextAlign.right : pw.TextAlign.center,
   ),
@@ -326,5 +307,7 @@ pw.Text _text(
     fontSize: size,
     color: color,
     fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+    wordSpacing: numeric ? 1 : 1.5,
+    lineSpacing: 3,
   ),
 );

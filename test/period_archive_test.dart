@@ -73,6 +73,8 @@ void main() {
         ],
         status: OrderStatus.arrived,
       );
+      final catalog = (await db.product(product))!;
+      await db.saveProduct(catalog.name, 3200, old: catalog);
       await db.toggleAccountClosed(account, true);
       await db.saveReceipt(120, 'ربح مستلم');
       await db.saveSideCost(50, '');
@@ -94,7 +96,19 @@ void main() {
       expect(archive.report.sideCosts, 50);
       expect(archive.data.accounts.single.isClosed, isTrue);
       expect(archive.data.orders.single.items.last.unpriced, isTrue);
-      expect(PeriodReport.fromOrders(archive.data.orders).amount, 5000);
+      final periodReport = PeriodReport.fromOrders(
+        archive.data.orders,
+        catalogPrices: {
+          for (final item in archive.data.products) item.id: item.sale,
+        },
+      );
+      expect(periodReport.amount, 6400);
+      expect(
+        periodReport.items
+            .firstWhere((item) => item.name == 'منتج محفوظ')
+            .unitPrice,
+        3200,
+      );
 
       final next = await db.saveAccount('حساب جديد');
       await order(next, 'طلب جديد');

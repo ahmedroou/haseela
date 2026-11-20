@@ -707,27 +707,32 @@ class AppDatabase {
     String condition,
     List<Object> args,
   ) async {
-    final rows = await executor.rawQuery('''
+    final rows = await executor.rawQuery(
+      '''
       WITH selected_orders AS (
         SELECT o.* FROM orders o JOIN accounts a ON a.id = o.account_id
         WHERE o.status != 'cancelled' AND ($condition)
       ), lines AS (
-        SELECT product_name, quantity, sale, is_unpriced
+        SELECT product_id, product_name, quantity, sale, is_unpriced
         FROM selected_orders WHERE sale_total IS NULL
         UNION ALL
-        SELECT i.product_name, i.quantity, i.sale, i.is_unpriced
+        SELECT i.product_id, i.product_name, i.quantity, i.sale, i.is_unpriced
         FROM order_items i JOIN selected_orders o ON o.id = i.order_id
+      ), priced_lines AS (
+        SELECT lines.product_name, lines.quantity,
+          CASE WHEN lines.is_unpriced = 0 THEN COALESCE(p.sale, lines.sale) END unit_price
+        FROM lines LEFT JOIN products p ON p.id = lines.product_id
       )
-      SELECT MIN(product_name) name, SUM(quantity) quantity,
-        SUM(CASE WHEN is_unpriced = 0 THEN quantity * sale END) amount
-      FROM lines GROUP BY product_name COLLATE NOCASE
-      ORDER BY name COLLATE NOCASE''', args);
-    return PeriodReport(
+      SELECT MIN(product_name) name, SUM(quantity) quantity, unit_price
+      FROM priced_lines GROUP BY product_name COLLATE NOCASE, unit_price''',
+      args,
+    );
+    return PeriodReport.fromPricedLines(
       rows.map(
-        (row) => PeriodReportItem(
-          row['name'] as String,
-          row['quantity'] as int,
-          row['amount'] as int?,
+        (row) => (
+          name: row['name'] as String,
+          quantity: row['quantity'] as int,
+          price: row['unit_price'] as int?,
         ),
       ),
     );

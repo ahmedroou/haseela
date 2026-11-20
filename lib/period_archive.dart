@@ -412,16 +412,20 @@ class _ArchivedPeriodPageState extends State<_ArchivedPeriodPage> {
             title: const Text('تقرير الفترة'),
             trailing: const Icon(Icons.chevron_left_rounded),
             enabled: !restoring,
-            onTap: () => openPeriodReport(
-              context,
-              widget.store,
-              saved: (
-                label: info.name == info.range
-                    ? info.name
-                    : '${info.name} · ${info.range}',
-                report: PeriodReport.fromOrders(data.orders),
-              ),
-            ),
+            onTap: () {
+              try {
+                final saved = PeriodReport.fromOrders(
+                  data.orders,
+                  catalogPrices: {
+                    for (final product in data.products)
+                      product.id: product.sale,
+                  },
+                );
+                openPeriodReport(context, widget.store, saved: saved);
+              } on FormatException catch (error) {
+                notice(context, error.message);
+              }
+            },
           ),
         ),
         const SizedBox(height: 4),

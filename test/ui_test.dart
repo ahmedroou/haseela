@@ -992,9 +992,22 @@ void main() {
       await tester.tap(generate);
       await flush(tester);
       expect(find.text('كامل السجل الحالي'), findsOneWidget);
-      expect(find.text('صنف قبل 2020'), findsOneWidget);
+      final olderProduct = find.text('صنف قبل 2020');
+      final panelScroll = find.descendant(
+        of: find.byKey(const ValueKey('period_report_panel')),
+        matching: find.byType(Scrollable),
+      );
+      await tester.scrollUntilVisible(
+        olderProduct,
+        110,
+        scrollable: panelScroll,
+      );
+      expect(olderProduct, findsOneWidget);
 
-      await tester.tap(find.text('بالحسابات'));
+      final byAccounts = find.text('بالحسابات');
+      tester.state<ScrollableState>(panelScroll).position.jumpTo(0);
+      await tester.pumpAndSettle();
+      await tester.tap(byAccounts.hitTestable());
       await tester.pumpAndSettle();
       await tester.tap(generate);
       await tester.pumpAndSettle();
@@ -1015,7 +1028,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(generate);
       await flush(tester);
-      expect(find.text('من طلبات سبتمبر إلى دفعة أمازون'), findsOneWidget);
+      expect(find.text('الفترة المحددة'), findsOneWidget);
+      expect(find.text('من طلبات سبتمبر إلى دفعة أمازون'), findsNothing);
       expect(find.text('AirPods Pro'), findsOneWidget);
       expect(total, findsOneWidget);
 
@@ -1089,6 +1103,14 @@ void main() {
     await tester.tap(report);
     await flush(tester);
     expect(find.text('AirPods Pro'), findsOneWidget);
+    expect(find.text('فترة محفوظة'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('period_report_panel')),
+        matching: find.textContaining('الفترة الأولى'),
+      ),
+      findsNothing,
+    );
     expect(find.text('ساعة روز'), findsNothing);
     expect(find.byKey(const ValueKey('save_period_pdf')), findsOneWidget);
     await tester.tap(find.byTooltip('إغلاق تقرير الفترة'));

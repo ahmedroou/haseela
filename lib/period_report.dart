@@ -19,7 +19,7 @@ import 'store.dart';
 Future<void> openPeriodReport(
   BuildContext context,
   AppStore store, {
-  ({String label, PeriodReport report})? saved,
+  PeriodReport? saved,
 }) {
   final fromEdge = Directionality.of(context) == TextDirection.rtl ? -1.0 : 1.0;
   return showGeneralDialog<void>(
@@ -60,7 +60,7 @@ String _dateText(DateTime date) => DateFormat('yyyy/MM/dd', 'en').format(date);
 class _PeriodReportPanel extends StatefulWidget {
   const _PeriodReportPanel({required this.store, required this.saved});
   final AppStore store;
-  final ({String label, PeriodReport report})? saved;
+  final PeriodReport? saved;
 
   @override
   State<_PeriodReportPanel> createState() => _PeriodReportPanelState();
@@ -72,7 +72,7 @@ class _PeriodReportPanelState extends State<_PeriodReportPanel> {
   Account? startAccount, endAccount;
   _PeriodMode mode = _PeriodMode.dates;
   bool allDates = false;
-  late PeriodReport? report = widget.saved?.report;
+  late PeriodReport? report = widget.saved;
   bool generating = false, exporting = false;
   String? error, exportMessage;
   bool get busy => generating || exporting;
@@ -144,24 +144,18 @@ class _PeriodReportPanelState extends State<_PeriodReportPanel> {
   }
 
   String get periodLabel {
-    final saved = widget.saved;
-    if (saved != null) return saved.label;
+    if (widget.saved != null) return 'فترة محفوظة';
     if (mode == _PeriodMode.dates) {
       if (allDates) return 'كامل السجل الحالي';
       return 'من ${_dateText(startDate)} إلى ${_dateText(endDate)}';
     }
-    final bounds = [startAccount!, endAccount!]
-      ..sort(Account.compareByCreation);
-    return 'من ${bounds.first.name} إلى ${bounds.last.name}';
+    return 'الفترة المحددة';
   }
 
-  String get filterLabel => widget.saved != null
-      ? 'فترة مؤرشفة'
-      : mode == _PeriodMode.accounts
-      ? 'بالحسابات'
-      : allDates
-      ? 'كل الطلبات'
-      : 'بالتاريخ';
+  String? get filterLabel =>
+      widget.saved == null && mode == _PeriodMode.dates && !allDates
+      ? 'بالتاريخ'
+      : null;
 
   Future<void> generate() async {
     if (busy) return;
@@ -741,7 +735,22 @@ class _ReportRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Expanded(flex: 5, child: Text(row?.name ?? 'الصنف', style: style)),
+          Expanded(
+            flex: 5,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(row?.name ?? 'الصنف', style: style),
+                if (row?.unitPrice case final price?)
+                  Text(
+                    '${moneyText(price)} ريال للوحدة',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+              ],
+            ),
+          ),
           Expanded(
             flex: 2,
             child: Text(

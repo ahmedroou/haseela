@@ -69,7 +69,7 @@ void main() {
   );
 
   test(
-    'period report includes whole dates, expands orders and sums sale amounts by name',
+    'period report includes whole dates and applies catalog prices to order lines',
     () async {
       final start = DateTime(2026, 11, 3);
       final end = DateTime(2026, 11, 4);
@@ -105,19 +105,24 @@ void main() {
       await date(await add(status: OrderStatus.cancelled), end);
       await date(await add(), DateTime(2026, 11, 5));
       await date(await add(), DateTime(2026, 11, 2, 23, 59, 59, 999));
+      final catalogProduct = (await db.product(product))!;
+      await db.saveProduct(catalogProduct.name, 21050, old: catalogProduct);
 
       final result = await db.periodReportByDate(start, end);
       expect(
         result.items.map((item) => (item.name, item.quantity, item.amount)),
-        [('بيبي جوي', 5, 6713), ('قلم', 4, null)],
+        [('بيبي جوي', 5, 46303), ('قلم', 4, null)],
       );
-      expect(result.amount, 6713);
+      expect(result.items.first.unitPrice, isNull);
+      expect(result.amount, 46303);
       expect(result.quantity, 9);
       expect(
         result.toCsv('2026/11/03 إلى 2026/11/04'),
-        contains('"بيبي جوي",5,67.13\r\n"قلم",4,\r\n"الإجمالي",9,67.13'),
+        contains('"بيبي جوي",5,,463.03\r\n"قلم",4,,\r\n"الإجمالي",9,,463.03'),
       );
       expect((await db.periodReportByDate(end, end)).amount, 4203);
+      await db.deleteProduct(product);
+      expect((await db.periodReportByDate(start, end)).amount, 6713);
       await expectLater(
         db.periodReportByDate(end, start),
         throwsFormatException,
@@ -150,8 +155,9 @@ void main() {
 
       final result = await db.periodReportByAccounts(ids[2], ids[0]);
       expect(result.items.single.name, 'بيبي جوي');
+      expect(result.items.single.unitPrice, 18500);
       expect(result.quantity, 6);
-      expect(result.amount, 8300);
+      expect(result.amount, 111000);
       expect((await db.periodReportByAccounts(ids[1], ids[1])).quantity, 2);
       await expectLater(
         db.periodReportByAccounts(ids[0], 999999),
